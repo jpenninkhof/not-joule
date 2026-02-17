@@ -1,0 +1,71 @@
+{
+  "name": "ai-chat-app",
+  "version": "1.0.0",
+  "description": "AI Chat Application with SAP AI Core integration",
+  "repository": "",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@cap-js/attachments": "^3.7.0",
+    "@cap-js/hana": "^2",
+    "@sap-ai-sdk/ai-api": "^1",
+    "@sap-ai-sdk/foundation-models": "^1",
+    "@sap-cloud-sdk/connectivity": "^3",
+    "@sap-cloud-sdk/http-client": "^3",
+    "@sap/cds": "^9",
+    "@sap/xsenv": "^5",
+    "@sap/xssec": "^4",
+    "express": "^4",
+    "uuid": "^9",
+    "ws": "^8"
+  },
+  "devDependencies": {
+    "@cap-js/sqlite": "^2",
+    "@sap/cds-dk": "^9"
+  },
+  "scripts": {
+    "start": "cds-serve",
+    "watch": "cds watch",
+    "build": "cds build --production",
+    "build:webapp": "cd app/webapp && npm ci && npm run build",
+    "deploy": "cf deploy",
+    "undeploy": "cf undeploy ai-chat-app --delete-services --delete-service-keys"
+  },
+  "cds": {
+    "requires": {
+      "db": {
+        "kind": "sql"
+      },
+      "[production]": {
+        "db": {
+          "kind": "hana"
+        },
+        "auth": "xsuaa"
+      },
+      "[development]": {
+        "auth": {
+          "kind": "mocked",
+          "users": {
+            "alice": {
+              "password": "alice",
+              "ID": "alice",
+              "roles": [
+                "authenticated-user"
+              ]
+            },
+            "bob": {
+              "password": "bob",
+              "ID": "bob",
+              "roles": [
+                "authenticated-user"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "sapux": [
+    "app/webapp"
+  ]
+}

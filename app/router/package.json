@@ -1,0 +1,11 @@
+{
+  "name": "ai-chat-app-router",
+  "version": "1.0.0",
+  "description": "App Router for AI Chat Application",
+  "dependencies": {
+    "@sap/approuter": "^16"
+  },
+  "scripts": {
+    "start": "node node_modules/@sap/approuter/approuter.js"
+  }
+}

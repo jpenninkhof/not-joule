@@ -1,0 +1,128 @@
+_schema-version: 3.3.0
+ID: ai-chat-app
+version: 1.0.0
+description: "AI Chat Application with SAP AI Core integration"
+parameters:
+  enable-parallel-deployments: true
+
+build-parameters:
+  before-all:
+    - builder: custom
+      commands:
+        - npm ci
+        - npx cds build --production
+
+modules:
+  # React Webapp (build only, not deployed)
+  - name: ai-chat-app-webapp
+    type: html5
+    path: app/webapp
+    build-parameters:
+      builder: custom
+      commands:
+        - npm ci
+        - npm run build
+      build-result: dist
+      supported-platforms: []
+
+  # CAP Backend Service
+  - name: ai-chat-app-srv
+    type: nodejs
+    path: gen/srv
+    parameters:
+      instances: 1
+      buildpack: nodejs_buildpack
+      memory: 512M
+    build-parameters:
+      builder: npm-ci
+    properties:
+      NODE_ENV: production
+    provides:
+      - name: srv-api
+        properties:
+          srv-url: ${default-url}
+    requires:
+      - name: ai-chat-app-auth
+      - name: ai-chat-app-db
+      - name: ai-chat-app-aicore
+      - name: ai-chat-app-objectstore
+
+  # HANA Database Deployer
+  - name: ai-chat-app-db-deployer
+    type: hdb
+    path: gen/db
+    parameters:
+      buildpack: nodejs_buildpack
+    requires:
+      - name: ai-chat-app-db
+
+  # Standalone App Router
+  - name: ai-chat-app-router
+    type: approuter.nodejs
+    path: app/router
+    parameters:
+      instances: 1
+      memory: 256M
+      disk-quota: 512M
+      routes:
+        - route: ${default-url}
+        - route: notjoule.cfapps.eu10-004.hana.ondemand.com
+    build-parameters:
+      builder: custom
+      commands:
+        - npm ci
+      requires:
+        - name: ai-chat-app-webapp
+          artifacts:
+            - dist/*
+          target-path: webapp
+    requires:
+      - name: ai-chat-app-auth
+      - name: srv-api
+        group: destinations
+        properties:
+          name: srv-api
+          url: ~{srv-url}
+          forwardAuthToken: true
+
+resources:
+  # XSUAA Service
+  - name: ai-chat-app-auth
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: xsuaa
+      service-plan: application
+      path: ./xs-security.json
+      config:
+        xsappname: ai-chat-app-${org}-${space}
+        tenant-mode: dedicated
+        oauth2-configuration:
+          credential-types:
+            - "binding-secret"
+            - "x509"
+
+  # HANA HDI Container
+  - name: ai-chat-app-db
+    type: com.sap.xs.hdi-container
+    parameters:
+      service: hana
+      service-plan: hdi-shared
+
+  # AI Core Service (User-Provided)
+  - name: ai-chat-app-aicore
+    type: org.cloudfoundry.user-provided-service
+    parameters:
+      config:
+        serviceurls:
+          AI_API_URL: "https://api.ai.prod.eu-central-1.aws.ml.hana.ondemand.com"
+        clientid: "sb-2a2f5550-51ad-4d3a-8f0b-47d7c3ec8bb0!b639660|aicore!b540"
+        clientsecret: "abc8d46f-1cc0-46df-a842-df97e8bbfe9a$PcoQ5QoWwB7bhfNRC6VwqfNuFJttdQXaBtKmHcu2NOo="
+        url: "https://btp-ca-nl-ai-core.authentication.eu10.hana.ondemand.com"
+
+  # Object Store Service for attachments
+  - name: ai-chat-app-objectstore
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: objectstore
+      service-plan: standard
+

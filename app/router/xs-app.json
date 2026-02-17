@@ -1,0 +1,62 @@
+{
+  "welcomeFile": "/index.html",
+  "authenticationMethod": "route",
+  "websockets": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "source": "^/user-api/(.*)$",
+      "target": "/user-api/$1",
+      "service": "sap-approuter-userapi"
+    },
+    {
+      "source": "^/odata/(.*)$",
+      "target": "/odata/$1",
+      "destination": "srv-api",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/ws/(.*)$",
+      "target": "/ws/$1",
+      "destination": "srv-api",
+      "authenticationType": "xsuaa"
+    },
+    {
+      "source": "^/api/chat/stream$",
+      "target": "/api/chat/stream",
+      "destination": "srv-api",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/api/conversation(.*)$",
+      "target": "/api/conversation$1",
+      "destination": "srv-api",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/api/(.*)$",
+      "target": "/api/$1",
+      "destination": "srv-api",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/assets/(.*)$",
+      "target": "/assets/$1",
+      "localDir": "webapp",
+      "authenticationType": "xsuaa",
+      "cacheControl": "no-cache, no-store, must-revalidate"
+    },
+    {
+      "source": "^(.*)$",
+      "target": "$1",
+      "localDir": "webapp",
+      "authenticationType": "xsuaa",
+      "cacheControl": "no-cache, no-store, must-revalidate"
+    }
+  ]
+}

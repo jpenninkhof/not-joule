@@ -1,0 +1,20 @@
+{
+  "VCAP_SERVICES": {
+    "aicore": [
+      {
+        "name": "aicore",
+        "label": "aicore",
+        "credentials": {
+          "serviceurls": {
+            "AI_API_URL": "https://api.ai.prod.eu-central-1.aws.ml.hana.ondemand.com"
+          },
+          "clientid": "YOUR_CLIENT_ID",
+          "clientsecret": "YOUR_CLIENT_SECRET",
+          "url": "https://YOUR_SUBDOMAIN.authentication.eu10.hana.ondemand.com"
+        }
+      }
+    ]
+  },
+  "AICORE_DEPLOYMENT_ID": "d76331514e34ae4c",
+  "AICORE_RESOURCE_GROUP": "default"
+}
