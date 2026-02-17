@@ -1,7 +1,0 @@
-Integrate @cap-js/attachments plugin for cleaner attachment handling
-
-- Added @cap-js/attachments plugin for standardized attachment management
-- Updated schema to use Attachments aspect from the plugin
-- Modified server.js to use plugin's content storage API
-- Note: Object Store service not available in this BTP environment,
-  plugin falls back to database storage
