@@ -37,6 +37,7 @@ modules:
       builder: npm-ci
     properties:
       NODE_ENV: production
+      AICORE_EMBEDDING_DEPLOYMENT_ID: d4f53992eba833fe
     provides:
       - name: srv-api
         properties:
