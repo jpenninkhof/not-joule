@@ -1,5 +1,6 @@
 const cds = require('@sap/cds');
 const { v4: uuidv4 } = require('uuid');
+const { memoryService } = require('./memory-service');
 
 // Try to load WebSocket, but don't fail if not available
 let WebSocket;
@@ -168,6 +169,27 @@ cds.on('served', async () => {
                 }
             }
             
+            // Retrieve relevant memories for this user and inject into system prompt
+            let systemPromptAddition = '';
+            try {
+                const relevantMemories = await memoryService.retrieveRelevantMemories(userId, content || '');
+                systemPromptAddition = memoryService.formatMemoriesForPrompt(relevantMemories);
+                if (systemPromptAddition) {
+                    console.log(`Injecting ${relevantMemories.length} memories into system prompt for user ${userId}`);
+                }
+            } catch (memError) {
+                console.error('Error retrieving memories:', memError);
+            }
+            
+            // Add system message with memories if we have any
+            if (systemPromptAddition) {
+                // Prepend system message with memory context
+                aiMessages.unshift({
+                    role: 'system',
+                    content: `You are a helpful AI Assistant.${systemPromptAddition}`
+                });
+            }
+            
             // Set up SSE headers
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
@@ -290,6 +312,20 @@ cds.on('served', async () => {
                     
                     res.write(`data: ${JSON.stringify({ type: 'done', id: assistantMessageId })}\n\n`);
                     res.end();
+                    
+                    // Process memory extraction asynchronously (don't block the response)
+                    setImmediate(async () => {
+                        try {
+                            // Get the last few messages for memory extraction
+                            const recentMessages = [
+                                { role: 'user', content: content },
+                                { role: 'assistant', content: fullContent }
+                            ];
+                            await memoryService.processConversationTurn(userId, conversationId, recentMessages);
+                        } catch (memError) {
+                            console.error('Error processing memories:', memError);
+                        }
+                    });
                 });
                 
                 stream.on('error', (error) => {
@@ -595,6 +631,104 @@ cds.on('served', async () => {
         } catch (error) {
             console.error('Error fetching attachment:', error);
             res.status(500).json({ error: 'Failed to fetch attachment' });
+        }
+    });
+    
+    // ============ Memory Management Endpoints ============
+    
+    // Get all memories for the current user
+    app.get('/api/memories', async (req, res) => {
+        try {
+            const authHeader = req.headers.authorization;
+            if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                return res.status(401).json({ error: 'Unauthorized' });
+            }
+            
+            const token = authHeader.substring(7);
+            const parts = token.split('.');
+            if (parts.length !== 3) {
+                return res.status(401).json({ error: 'Invalid token' });
+            }
+            
+            let userId;
+            try {
+                const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+                userId = payload.user_name || payload.email || payload.sub;
+            } catch (e) {
+                return res.status(401).json({ error: 'Invalid token' });
+            }
+            
+            const memories = await memoryService.getAllMemories(userId);
+            res.json({ memories });
+        } catch (error) {
+            console.error('Error getting memories:', error);
+            res.status(500).json({ error: 'Failed to get memories' });
+        }
+    });
+    
+    // Delete a specific memory
+    app.delete('/api/memories/:id', async (req, res) => {
+        try {
+            const authHeader = req.headers.authorization;
+            if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                return res.status(401).json({ error: 'Unauthorized' });
+            }
+            
+            const token = authHeader.substring(7);
+            const parts = token.split('.');
+            if (parts.length !== 3) {
+                return res.status(401).json({ error: 'Invalid token' });
+            }
+            
+            let userId;
+            try {
+                const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+                userId = payload.user_name || payload.email || payload.sub;
+            } catch (e) {
+                return res.status(401).json({ error: 'Invalid token' });
+            }
+            
+            const memoryId = req.params.id;
+            const success = await memoryService.deleteMemory(memoryId, userId);
+            
+            if (success) {
+                res.json({ success: true });
+            } else {
+                res.status(404).json({ error: 'Memory not found or access denied' });
+            }
+        } catch (error) {
+            console.error('Error deleting memory:', error);
+            res.status(500).json({ error: 'Failed to delete memory' });
+        }
+    });
+    
+    // Clear all memories for the current user
+    app.delete('/api/memories', async (req, res) => {
+        try {
+            const authHeader = req.headers.authorization;
+            if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                return res.status(401).json({ error: 'Unauthorized' });
+            }
+            
+            const token = authHeader.substring(7);
+            const parts = token.split('.');
+            if (parts.length !== 3) {
+                return res.status(401).json({ error: 'Invalid token' });
+            }
+            
+            let userId;
+            try {
+                const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+                userId = payload.user_name || payload.email || payload.sub;
+            } catch (e) {
+                return res.status(401).json({ error: 'Invalid token' });
+            }
+            
+            const success = await memoryService.clearAllMemories(userId);
+            res.json({ success });
+        } catch (error) {
+            console.error('Error clearing memories:', error);
+            res.status(500).json({ error: 'Failed to clear memories' });
         }
     });
     

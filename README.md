@@ -8,6 +8,7 @@ A modern, sleek AI chat interface built with SAP CAP (Cloud Application Programm
 - 💬 **Real-time Streaming** - Progressive response generation with Server-Sent Events (SSE)
 - 🔐 **Secure Authentication** - XSUAA-based user authentication
 - 💾 **Persistent Storage** - Chat history stored in SAP HANA database
+- 🧠 **Persistent Memory** - AI remembers user preferences and context across conversations using HANA vector engine
 - 🚀 **Cloud-Ready** - Deployable to SAP BTP Cloud Foundry with managed app-router
 
 ## Architecture
@@ -180,6 +181,104 @@ To change these settings, update the environment variables:
 
 - `POST /api/chat/stream` - Send message with streaming response (SSE)
 - `GET /api/health` - Health check
+- `GET /api/memories` - Get all memories for current user
+- `DELETE /api/memories/:id` - Delete a specific memory
+- `DELETE /api/memories` - Clear all memories for current user
+
+## Persistent Memory System
+
+The application includes a persistent memory system that allows the AI to remember important facts about users across conversations.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Memory Flow                                   │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  1. EXTRACTION (after each conversation turn)                        │
+│     ┌──────────────┐    ┌──────────────┐    ┌──────────────┐        │
+│     │ User Message │───▶│ AI Extracts  │───▶│ Store in     │        │
+│     │ + AI Response│    │ 0-3 Facts    │    │ HANA Vector  │        │
+│     └──────────────┘    └──────────────┘    └──────────────┘        │
+│                                                                      │
+│  2. RETRIEVAL (at conversation start)                                │
+│     ┌──────────────┐    ┌──────────────┐    ┌──────────────┐        │
+│     │ User's First │───▶│ Vector       │───▶│ Inject into  │        │
+│     │ Message      │    │ Similarity   │    │ System Prompt│        │
+│     └──────────────┘    └──────────────┘    └──────────────┘        │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Memory Extraction
+
+After each conversation turn, the system:
+1. Analyzes the user message and AI response
+2. Extracts 0-3 memory-worthy facts (personal attributes, preferences, goals)
+3. Generates vector embeddings for semantic search
+4. Stores in HANA with deduplication (cosine similarity > 0.92 = duplicate)
+
+**What gets remembered:**
+- Personal attributes (name, job, company, location)
+- Preferences (communication style, technical level)
+- Goals and projects
+- Important context for future conversations
+
+**What doesn't get remembered:**
+- Trivial or one-off questions
+- Generic information
+- Temporary states
+
+### Memory Retrieval
+
+At the start of each new conversation:
+1. The user's first message is embedded as a vector
+2. HANA performs cosine similarity search against stored memories
+3. Top 5 most relevant memories are retrieved
+4. Memories are injected into the system prompt
+
+### Database Schema
+
+```sql
+CREATE TABLE USER_MEMORIES (
+    ID NVARCHAR(36) PRIMARY KEY,
+    USER_ID NVARCHAR(255) NOT NULL,
+    CONTENT NCLOB NOT NULL,
+    EMBEDDING REAL_VECTOR(1536),
+    SOURCE_CONVERSATION_ID NVARCHAR(36),
+    CREATED_AT TIMESTAMP,
+    MODIFIED_AT TIMESTAMP
+);
+```
+
+### Configuration
+
+Set the embedding deployment ID for vector generation:
+```bash
+export AICORE_EMBEDDING_DEPLOYMENT_ID=your-embedding-deployment-id
+```
+
+If not configured, the system uses mock embeddings for development.
+
+### Memory Management API
+
+```bash
+# Get all memories
+curl -H "Authorization: Bearer $TOKEN" https://your-app/api/memories
+
+# Delete specific memory
+curl -X DELETE -H "Authorization: Bearer $TOKEN" https://your-app/api/memories/{id}
+
+# Clear all memories
+curl -X DELETE -H "Authorization: Bearer $TOKEN" https://your-app/api/memories
+```
+
+### Files
+
+- `srv/memory-service.js` - Core memory service with extraction, embedding, storage, and retrieval
+- `srv/prompts/extractMemory.txt` - Prompt template for memory extraction (easily tunable)
+- `db/schema.cds` - Includes UserMemories entity with Vector type
 
 ## Troubleshooting
 
