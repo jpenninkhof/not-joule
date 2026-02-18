@@ -13,9 +13,13 @@ class AiCoreClient {
         this.resourceGroup = process.env.AICORE_RESOURCE_GROUP || 'default';
         // Model type: 'anthropic' or 'openai' - detect from deployment or set explicitly
         this.modelType = process.env.AICORE_MODEL_TYPE || 'anthropic';
-        
+
         // Load credentials from environment or service binding
         this.credentials = this.loadCredentials();
+
+        // Token cache: avoid fetching a new token on every request
+        this._cachedToken = null;
+        this._tokenExpiresAt = 0;
     }
     
     /**
@@ -75,19 +79,24 @@ class AiCoreClient {
     }
     
     /**
-     * Get OAuth token from XSUAA
+     * Get OAuth token from XSUAA (cached until 60s before expiry)
      */
     async getToken() {
+        // Return cached token if still valid (with 60s safety margin)
+        if (this._cachedToken && Date.now() < this._tokenExpiresAt - 60000) {
+            return this._cachedToken;
+        }
+
         if (!this.credentials) {
             throw new Error('AI Core credentials not configured');
         }
-        
+
         const tokenUrl = new URL('/oauth/token', this.credentials.url);
         const auth = Buffer.from(`${this.credentials.clientid}:${this.credentials.clientsecret}`).toString('base64');
-        
-        return new Promise((resolve, reject) => {
+
+        const token = await new Promise((resolve, reject) => {
             const postData = 'grant_type=client_credentials';
-            
+
             const options = {
                 hostname: tokenUrl.hostname,
                 port: 443,
@@ -99,7 +108,7 @@ class AiCoreClient {
                     'Content-Length': Buffer.byteLength(postData)
                 }
             };
-            
+
             const req = https.request(options, (res) => {
                 let data = '';
                 res.on('data', chunk => data += chunk);
@@ -107,6 +116,10 @@ class AiCoreClient {
                     try {
                         const json = JSON.parse(data);
                         if (json.access_token) {
+                            // Cache the token with its expiry time
+                            const expiresIn = json.expires_in || 3600; // default 1 hour
+                            this._cachedToken = json.access_token;
+                            this._tokenExpiresAt = Date.now() + expiresIn * 1000;
                             resolve(json.access_token);
                         } else {
                             reject(new Error('No access token in response'));
@@ -116,11 +129,13 @@ class AiCoreClient {
                     }
                 });
             });
-            
+
             req.on('error', reject);
             req.write(postData);
             req.end();
         });
+
+        return token;
     }
     
     /**

@@ -7,51 +7,61 @@ const MAX_IMAGE_DIMENSION = 1920; // Max width/height for images
  * Compress an image file to be under the size limit
  */
 async function compressImage(file, maxSize = MAX_FILE_SIZE) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    
-    img.onload = () => {
-      let { width, height } = img;
-      
-      // Scale down if too large
-      if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
-        if (width > height) {
-          height = (height / width) * MAX_IMAGE_DIMENSION;
-          width = MAX_IMAGE_DIMENSION;
-        } else {
-          width = (width / height) * MAX_IMAGE_DIMENSION;
-          height = MAX_IMAGE_DIMENSION;
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    return await new Promise((resolve, reject) => {
+      const img = new Image();
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        let { width, height } = img;
+
+        // Scale down if too large
+        if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+          if (width > height) {
+            height = (height / width) * MAX_IMAGE_DIMENSION;
+            width = MAX_IMAGE_DIMENSION;
+          } else {
+            width = (width / height) * MAX_IMAGE_DIMENSION;
+            height = MAX_IMAGE_DIMENSION;
+          }
         }
-      }
-      
-      canvas.width = width;
-      canvas.height = height;
-      ctx.drawImage(img, 0, 0, width, height);
-      
-      // Try different quality levels
-      let quality = 0.9;
-      const tryCompress = () => {
-        canvas.toBlob(
-          (blob) => {
-            if (blob.size <= maxSize || quality <= 0.1) {
-              resolve(new File([blob], file.name, { type: 'image/jpeg' }));
-            } else {
-              quality -= 0.1;
-              tryCompress();
-            }
-          },
-          'image/jpeg',
-          quality
-        );
+
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Try different quality levels
+        let quality = 0.9;
+        const tryCompress = () => {
+          canvas.toBlob(
+            (blob) => {
+              if (blob.size <= maxSize || quality <= 0.1) {
+                resolve(new File([blob], file.name, { type: 'image/jpeg' }));
+              } else {
+                quality -= 0.1;
+                tryCompress();
+              }
+            },
+            'image/jpeg',
+            quality
+          );
+        };
+        tryCompress();
       };
-      tryCompress();
-    };
-    
-    img.onerror = reject;
-    img.src = URL.createObjectURL(file);
-  });
+
+      img.onerror = (err) => {
+        URL.revokeObjectURL(objectUrl);
+        reject(err);
+      };
+      img.src = objectUrl;
+    });
+  } catch (err) {
+    URL.revokeObjectURL(objectUrl);
+    throw err;
+  }
 }
 
 /**

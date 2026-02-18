@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getAttachment } from '../services/api';
+import { ChatbotLogo } from './ChatbotLogo';
 
 /**
  * Attachment item component - handles click to view/download
@@ -14,50 +15,48 @@ function AttachmentItem({ attachment }) {
   const attachmentType = attachment.type || attachment.mimeType || 'application/octet-stream';
   const isImage = attachmentType?.startsWith('image/');
   
+  /**
+   * Safely open an image in a new tab using DOM APIs (avoids XSS via document.write).
+   */
+  const openImageInNewTab = (src, alt) => {
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.title = alt;
+    const style = win.document.createElement('style');
+    style.textContent = 'body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a1a;}';
+    win.document.head.appendChild(style);
+    const img = win.document.createElement('img');
+    img.src = src;
+    img.alt = alt;
+    img.style.maxWidth = '100%';
+    img.style.maxHeight = '100vh';
+    win.document.body.appendChild(img);
+  };
+
   const handleClick = async () => {
     // If we already have the data (from a just-sent message), use it directly
     if (attachment.preview || attachment.data) {
       if (isImage) {
-        // Open image in new tab
-        const win = window.open();
-        win.document.write(`
-          <html>
-            <head><title>${attachmentName}</title></head>
-            <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a1a;">
-              <img src="${attachment.preview || attachment.data}" alt="${attachmentName}" style="max-width:100%;max-height:100vh;"/>
-            </body>
-          </html>
-        `);
+        openImageInNewTab(attachment.preview || attachment.data, attachmentName);
       } else {
-        // Download file
         downloadFile(attachment.preview || attachment.data, attachmentName, attachmentType);
       }
       return;
     }
-    
+
     // Otherwise, fetch from server
     if (!attachment.ID) {
       console.error('No attachment ID available');
       return;
     }
-    
+
     setLoading(true);
     try {
       const data = await getAttachment(attachment.ID);
       if (data && data.data) {
         if (isImage) {
-          // Open image in new tab
-          const win = window.open();
-          win.document.write(`
-            <html>
-              <head><title>${data.name}</title></head>
-              <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a1a;">
-                <img src="${data.data}" alt="${data.name}" style="max-width:100%;max-height:100vh;"/>
-              </body>
-            </html>
-          `);
+          openImageInNewTab(data.data, data.name);
         } else {
-          // Download file
           downloadFile(data.data, data.name, data.type);
         }
       }
@@ -136,13 +135,6 @@ function AttachmentItem({ attachment }) {
     </div>
   );
 }
-
-// Chatbot SVG Logo Component (same as in App.jsx)
-const ChatbotLogo = ({ className }) => (
-  <svg className={className} viewBox="0 0 502 516" fill="currentColor">
-    <path d="M 337.0 510.2 C 334.2 509.2, 326.8 511.7, 320.0 504.2 C 313.2 496.7, 301.5 472.8, 296.0 465.0 C 290.5 457.2, 313.7 463.9, 287.0 457.6 C 260.3 451.3, 175.2 437.0, 136.0 427.1 C 96.8 417.2, 71.3 407.6, 52.0 398.2 C 32.7 388.9, 27.9 382.2, 20.2 371.0 C 12.5 359.8, 8.2 344.3, 5.8 331.0 C 3.3 317.7, 4.3 302.5, 5.6 291.0 C 7.0 279.5, 9.1 271.2, 13.8 262.0 C 18.4 252.8, 25.8 242.9, 33.7 236.0 C 41.5 229.1, 54.0 230.0, 61.0 220.5 C 68.0 211.0, 69.9 190.6, 75.7 179.0 C 81.6 167.4, 88.8 157.9, 96.0 150.6 C 103.2 143.3, 109.3 139.6, 119.0 135.0 C 128.7 130.4, 132.7 126.6, 154.0 123.0 C 175.3 119.3, 231.0 119.2, 247.0 113.0 C 263.0 106.7, 252.5 93.0, 250.0 85.3 C 247.5 77.7, 236.0 73.9, 231.9 67.0 C 227.9 60.1, 225.0 52.2, 225.8 44.0 C 226.6 35.8, 230.6 24.5, 236.6 18.0 C 242.6 11.5, 254.8 6.7, 262.0 4.8 C 269.2 2.9, 274.8 5.2, 280.0 6.7 C 285.2 8.2, 289.1 10.5, 293.0 13.7 C 296.9 16.9, 300.6 21.1, 303.2 26.0 C 305.8 30.9, 308.9 35.6, 308.3 43.0 C 307.8 50.4, 305.5 63.0, 300.0 70.5 C 294.5 78.0, 279.5 80.6, 275.2 88.0 C 270.9 95.4, 265.2 108.4, 274.0 114.6 C 282.8 120.8, 311.0 120.6, 328.0 125.0 C 345.0 129.3, 361.8 134.5, 376.0 140.8 C 390.2 147.1, 403.8 154.8, 413.0 162.7 C 422.2 170.6, 426.7 178.8, 431.3 188.0 C 435.8 197.2, 438.7 207.0, 440.2 218.0 C 441.8 229.0, 444.4 243.8, 440.4 254.0 C 436.4 264.2, 421.1 270.5, 416.3 279.0 C 411.5 287.5, 411.3 300.6, 411.6 305.0 C 411.9 309.4, 413.1 309.4, 418.0 305.4 C 422.9 301.4, 434.0 285.6, 441.0 281.0 C 448.0 276.4, 453.2 276.3, 460.0 277.8 C 466.8 279.2, 476.3 283.0, 482.0 289.7 C 487.7 296.4, 492.2 304.4, 494.2 318.0 C 496.3 331.6, 495.1 357.5, 494.2 371.0 C 493.3 384.5, 490.9 392.0, 488.7 399.0 C 486.6 406.0, 488.4 406.7, 481.3 413.0 C 474.1 419.3, 464.0 429.4, 446.0 437.1 C 428.0 444.8, 389.2 448.2, 373.0 459.0 C 356.9 469.8, 355.3 493.5, 349.3 502.0 C 343.3 510.5, 339.1 508.8, 337.0 510.2 C 334.9 511.6, 339.8 511.2, 337.0 510.2 Z M 321.5 364.0 C 327.4 362.3, 348.7 359.3, 357.0 354.0 C 365.2 348.7, 367.7 348.8, 371.1 332.0 C 374.5 315.2, 377.5 271.3, 377.3 253.0 C 377.2 234.7, 373.9 230.8, 370.3 222.0 C 366.7 213.2, 365.9 207.1, 356.0 200.4 C 346.1 193.7, 332.3 186.6, 311.0 181.9 C 289.7 177.3, 255.0 173.7, 228.0 172.5 C 201.0 171.3, 165.3 173.2, 149.0 174.7 C 132.7 176.2, 136.2 177.8, 130.0 181.3 C 123.8 184.9, 117.5 188.2, 111.7 196.0 C 105.9 203.8, 99.3 214.8, 95.3 228.0 C 91.2 241.2, 88.1 261.7, 87.5 275.0 C 86.9 288.3, 87.8 298.6, 91.5 308.0 C 95.3 317.4, 102.6 325.2, 110.0 331.2 C 117.4 337.2, 125.3 340.3, 136.0 344.0 C 146.7 347.7, 150.0 349.8, 174.0 353.2 C 198.0 356.6, 255.4 362.6, 280.0 364.4 C 304.6 366.2, 314.6 364.1, 321.5 364.0 C 328.4 363.9, 315.6 365.7, 321.5 364.0 Z M 310.0 305.1 C 305.3 305.0, 287.9 305.5, 282.0 304.1 C 276.1 302.8, 275.4 307.5, 274.5 297.0 C 273.6 286.5, 275.2 251.9, 276.7 241.0 C 278.1 230.1, 279.1 232.6, 283.0 231.3 C 286.9 230.0, 296.5 229.2, 300.1 233.0 C 303.8 236.8, 301.7 249.2, 304.7 254.0 C 307.6 258.8, 315.8 254.8, 317.8 262.0 C 319.9 269.2, 318.5 289.8, 317.1 297.0 C 315.8 304.2, 311.2 303.8, 310.0 305.1 C 308.8 306.5, 314.7 305.3, 310.0 305.1 Z M 179.0 302.1 C 174.5 302.0, 157.8 302.5, 152.0 301.1 C 146.2 299.8, 145.3 304.7, 144.5 294.0 C 143.6 283.3, 145.2 248.0, 146.8 237.0 C 148.4 226.0, 150.1 229.1, 154.0 228.0 C 157.9 226.8, 166.8 226.3, 170.1 230.0 C 173.5 233.7, 171.1 245.2, 174.1 250.0 C 177.0 254.8, 185.6 251.8, 187.8 259.0 C 190.0 266.2, 188.7 285.8, 187.2 293.0 C 185.7 300.2, 180.4 300.6, 179.0 302.1 C 177.6 303.7, 183.5 302.3, 179.0 302.1 Z" fillRule="evenodd"/>
-  </svg>
-);
 
 /**
  * Chat message component with markdown support

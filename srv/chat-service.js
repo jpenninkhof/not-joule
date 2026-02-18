@@ -55,16 +55,25 @@ module.exports = class ChatService extends cds.ApplicationService {
                     }
                     
                     conversation.messages = await db.run(messagesQuery);
-                    
-                    // Load attachments for each message (without the content field to save memory)
-                    for (const msg of conversation.messages) {
-                        const attachments = await db.run(
+
+                    // Load attachments for all messages in a single query (avoids N+1)
+                    const messageIds = conversation.messages.map(m => m.ID);
+                    if (messageIds.length > 0) {
+                        const allAttachments = await db.run(
                             SELECT.from('ai.chat.MessageAttachments')
-                                .where({ message_ID: msg.ID })
-                                .columns('ID', 'filename', 'mimeType', 'status')
+                                .where({ message_ID: { in: messageIds } })
+                                .columns('ID', 'filename', 'mimeType', 'status', 'message_ID')
                         );
-                        if (attachments.length > 0) {
-                            msg.attachments = attachments;
+                        // Group attachments by message_ID
+                        const attachmentsByMsg = {};
+                        for (const att of allAttachments) {
+                            if (!attachmentsByMsg[att.message_ID]) attachmentsByMsg[att.message_ID] = [];
+                            attachmentsByMsg[att.message_ID].push(att);
+                        }
+                        for (const msg of conversation.messages) {
+                            if (attachmentsByMsg[msg.ID]) {
+                                msg.attachments = attachmentsByMsg[msg.ID];
+                            }
                         }
                     }
                 }

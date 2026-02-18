@@ -230,7 +230,8 @@ Your response (JSON only):`;
     }
 
     /**
-     * Store a memory in the HANA database with vector embedding
+     * Store a memory in the HANA database with vector embedding.
+     * Generates the embedding once and reuses it for both deduplication and storage.
      * @param {string} userId - The user ID
      * @param {string} content - The memory content
      * @param {string} conversationId - The source conversation ID
@@ -240,17 +241,17 @@ Your response (JSON only):`;
         try {
             const db = await cds.connect.to('db');
 
-            // Check for duplicates first
-            const isDuplicate = await this.checkDuplicate(userId, content, db);
-            if (isDuplicate) {
-                console.log('Skipping duplicate memory:', content.substring(0, 50));
-                return false;
-            }
-
-            // Generate embedding
+            // Generate embedding once, reuse for dedup check and storage
             const embedding = await this.embedText(content);
             if (!embedding) {
                 console.error('Failed to generate embedding for memory');
+                return false;
+            }
+
+            // Check for duplicates using the pre-computed embedding
+            const isDuplicate = await this.checkDuplicate(userId, content, db, embedding);
+            if (isDuplicate) {
+                console.log('Skipping duplicate memory:', content.substring(0, 50));
                 return false;
             }
 
@@ -267,17 +268,16 @@ Your response (JSON only):`;
 
             // Insert using raw SQL for vector support
             const hana = db.dbc;
-            
+
             if (hana && hana.exec) {
-                // Use native HANA query with REAL_VECTOR
                 const embeddingStr = `[${embedding.join(',')}]`;
-                
+
                 await new Promise((resolve, reject) => {
                     hana.exec(
-                        `INSERT INTO "AI_CHAT_USERMEMORIES" 
+                        `INSERT INTO "AI_CHAT_USERMEMORIES"
                          ("ID", "USERID", "CONTENT", "EMBEDDING", "SOURCECONVERSATIONID", "CREATEDAT", "MODIFIEDAT")
                          VALUES (?, ?, ?, TO_REAL_VECTOR(?), ?, ?, ?)`,
-                        [memory.ID, memory.userId, memory.content, embeddingStr, 
+                        [memory.ID, memory.userId, memory.content, embeddingStr,
                          memory.sourceConversationId, memory.createdAt, memory.modifiedAt],
                         (err) => {
                             if (err) reject(err);
@@ -322,24 +322,26 @@ Your response (JSON only):`;
     }
 
     /**
-     * Check if a similar memory already exists (deduplication)
-     * Uses both vector similarity and text normalization
+     * Check if a similar memory already exists (deduplication).
+     * Uses both text normalization and vector similarity.
+     * Accepts a pre-computed embedding to avoid redundant API calls.
      * @param {string} userId - The user ID
      * @param {string} content - The memory content to check
      * @param {object} db - Database connection
+     * @param {Array<number>} embedding - Pre-computed embedding vector
      * @returns {Promise<boolean>} True if a similar memory exists
      */
-    async checkDuplicate(userId, content, db) {
+    async checkDuplicate(userId, content, db, embedding) {
         try {
             // First, check for text-based duplicates (handles word order differences)
             const normalizedContent = this.normalizeForComparison(content);
-            
+
             const existingMemories = await db.run(
                 SELECT.from('ai.chat.UserMemories')
                     .where({ userId: userId })
                     .columns('content')
             );
-            
+
             for (const mem of existingMemories) {
                 const normalizedExisting = this.normalizeForComparison(mem.content);
                 if (normalizedContent === normalizedExisting) {
@@ -347,16 +349,15 @@ Your response (JSON only):`;
                     return true;
                 }
             }
-            
-            // Then check vector similarity
-            const embedding = await this.embedText(content);
+
+            // Then check vector similarity using the pre-computed embedding
             if (!embedding) return false;
 
             const hana = db.dbc;
-            
+
             if (hana && hana.exec) {
                 const embeddingStr = `[${embedding.join(',')}]`;
-                
+
                 const result = await new Promise((resolve, reject) => {
                     hana.exec(
                         `SELECT TOP 1 "ID", "CONTENT", COSINE_SIMILARITY("EMBEDDING", TO_REAL_VECTOR(?)) AS similarity
