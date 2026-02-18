@@ -1,6 +1,28 @@
 const cds = require('@sap/cds');
 const { v4: uuidv4 } = require('uuid');
 
+function extractReadKey(req, keyName = 'ID') {
+    if (req.data && req.data[keyName]) {
+        return req.data[keyName];
+    }
+
+    const where = req.query?.SELECT?.from?.ref?.[0]?.where;
+    if (!Array.isArray(where)) {
+        return null;
+    }
+
+    for (let i = 0; i < where.length - 2; i++) {
+        const left = where[i];
+        const op = where[i + 1];
+        const right = where[i + 2];
+        if (left?.ref?.[0] === keyName && op === '=' && right?.val !== undefined) {
+            return right.val;
+        }
+    }
+
+    return null;
+}
+
 /**
  * Chat Service Implementation
  * Handles chat operations and integrates with SAP AI Core
@@ -20,9 +42,7 @@ module.exports = class ChatService extends cds.ApplicationService {
             const isSingleEntity = keys && keys.length > 0;
             
             if (isSingleEntity) {
-                // Extract the ID from the keys
-                const idCondition = keys.find(k => k.ref && k.ref[0] === 'ID');
-                const conversationId = idCondition ? keys[2]?.val : null;
+                const conversationId = extractReadKey(req, 'ID');
                 
                 if (!conversationId) {
                     return null;

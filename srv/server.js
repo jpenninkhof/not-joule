@@ -1,5 +1,7 @@
 const cds = require('@sap/cds');
 const { v4: uuidv4 } = require('uuid');
+const xsenv = require('@sap/xsenv');
+const xssec = require('@sap/xssec');
 const { memoryService } = require('./memory-service');
 const { AiCoreClient } = require('./ai-core-client');
 
@@ -20,11 +22,32 @@ function getAiCoreClient() {
     return _aiCoreClient;
 }
 
+const MAX_ATTACHMENTS = Number(process.env.MAX_ATTACHMENTS || 5);
+const MAX_ATTACHMENT_SIZE_BYTES = Number(process.env.MAX_ATTACHMENT_SIZE_BYTES || 5 * 1024 * 1024);
+const MAX_TOTAL_ATTACHMENT_SIZE_BYTES = Number(process.env.MAX_TOTAL_ATTACHMENT_SIZE_BYTES || 20 * 1024 * 1024);
+
 // ============ Auth Helpers ============
 
+let _xsuaaService;
+function getXsuaaService() {
+    if (_xsuaaService !== undefined) {
+        return _xsuaaService;
+    }
+
+    try {
+        const services = xsenv.getServices({ xsuaa: { tag: 'xsuaa' } });
+        _xsuaaService = new xssec.XsuaaService(services.xsuaa);
+    } catch (error) {
+        _xsuaaService = null;
+        console.warn('XSUAA service credentials not available. JWT validation fallback is only allowed in non-production.');
+    }
+
+    return _xsuaaService;
+}
+
 /**
- * Decode a JWT token and extract user info.
- * Returns { id, email, name } or null if invalid.
+ * Decode a JWT token payload without signature validation.
+ * This must only be used as non-production fallback.
  */
 function decodeUserFromToken(token) {
     if (!token || token.trim() === '') return null;
@@ -48,23 +71,117 @@ function decodeUserFromToken(token) {
     }
 }
 
+function extractBase64Data(data) {
+    if (typeof data !== 'string') return '';
+    if (data.includes(',')) return data.split(',')[1];
+    return data;
+}
+
+function estimateBytesFromBase64(base64Data) {
+    if (!base64Data) return 0;
+    const padding = base64Data.endsWith('==') ? 2 : (base64Data.endsWith('=') ? 1 : 0);
+    return Math.floor((base64Data.length * 3) / 4) - padding;
+}
+
+function validateAndNormalizeAttachments(attachments) {
+    if (!attachments) return [];
+    if (!Array.isArray(attachments)) {
+        throw new Error('Attachments must be an array');
+    }
+    if (attachments.length > MAX_ATTACHMENTS) {
+        throw new Error(`Too many attachments (max ${MAX_ATTACHMENTS})`);
+    }
+
+    let totalBytes = 0;
+    const normalized = [];
+
+    for (const att of attachments) {
+        if (!att || typeof att !== 'object') {
+            throw new Error('Invalid attachment format');
+        }
+
+        const base64Data = extractBase64Data(att.data);
+        if (!base64Data) {
+            throw new Error('Attachment data is missing');
+        }
+
+        const bytes = estimateBytesFromBase64(base64Data);
+        if (bytes <= 0) {
+            throw new Error('Attachment data is invalid');
+        }
+        if (bytes > MAX_ATTACHMENT_SIZE_BYTES) {
+            throw new Error(`Attachment exceeds max size (${Math.round(MAX_ATTACHMENT_SIZE_BYTES / 1024 / 1024)}MB)`);
+        }
+
+        totalBytes += bytes;
+        if (totalBytes > MAX_TOTAL_ATTACHMENT_SIZE_BYTES) {
+            throw new Error(`Total attachment size exceeds ${Math.round(MAX_TOTAL_ATTACHMENT_SIZE_BYTES / 1024 / 1024)}MB`);
+        }
+
+        normalized.push({
+            name: typeof att.name === 'string' && att.name.trim() ? att.name.trim().slice(0, 255) : 'attachment',
+            type: typeof att.type === 'string' && att.type.trim() ? att.type.trim().slice(0, 100) : 'application/octet-stream',
+            data: base64Data
+        });
+    }
+
+    return normalized;
+}
+
+function userFromPayload(payload) {
+    const id = payload.user_name || payload.email || payload.sub;
+    if (!id) return null;
+
+    return {
+        id,
+        email: payload.email,
+        name: payload.given_name || payload.user_name,
+        given_name: payload.given_name,
+        family_name: payload.family_name
+    };
+}
+
+async function getUserFromRequest(req) {
+    const xsuaaService = getXsuaaService();
+    if (xsuaaService) {
+        const authHeader = req.headers?.authorization || req.headers?.['x-approuter-authorization'];
+        const reqForValidation = authHeader
+            ? { ...req, headers: { ...req.headers, authorization: authHeader } }
+            : req;
+        const securityContext = await xssec.createSecurityContext(xsuaaService, { req: reqForValidation });
+        return userFromPayload(securityContext.token?.payload || {});
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+        return null;
+    }
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return null;
+    }
+    return decodeUserFromToken(authHeader.substring(7));
+}
+
 /**
  * Express middleware that extracts the user from the Authorization header.
  * Sets req.user on success; returns 401 on failure.
  */
-function authMiddleware(req, res, next) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Unauthorized' });
+async function authMiddleware(req, res, next) {
+    try {
+        const user = await getUserFromRequest(req);
+        if (!user) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        req.user = user;
+        next();
+    } catch (error) {
+        if (xssec.errors?.ValidationError && error instanceof xssec.errors.ValidationError) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        console.error('Authentication error:', error);
+        return res.status(500).json({ error: 'Authentication failed' });
     }
-
-    const user = decodeUserFromToken(authHeader.substring(7));
-    if (!user) {
-        return res.status(401).json({ error: 'Unauthorized - Invalid token' });
-    }
-
-    req.user = user;
-    next();
 }
 
 // ============ Shared Chat Logic ============
@@ -74,13 +191,8 @@ function authMiddleware(req, res, next) {
  */
 async function saveAttachments(db, attachments, messageId) {
     for (const att of attachments) {
-        let base64Data = att.data;
-        if (base64Data && base64Data.includes(',')) {
-            base64Data = base64Data.split(',')[1];
-        }
-
         const attachmentId = uuidv4();
-        const contentBuffer = base64Data ? Buffer.from(base64Data, 'base64') : null;
+        const contentBuffer = att.data ? Buffer.from(att.data, 'base64') : null;
 
         await db.run(INSERT.into('ai.chat.MessageAttachments').entries({
             ID: attachmentId,
@@ -276,8 +388,15 @@ cds.on('served', async () => {
         try {
             const { conversationId, content, attachments } = req.body;
             const userId = req.user.id;
+            let normalizedAttachments = [];
 
-            if (!conversationId || (!content && (!attachments || attachments.length === 0))) {
+            try {
+                normalizedAttachments = validateAndNormalizeAttachments(attachments);
+            } catch (validationError) {
+                return res.status(400).json({ error: validationError.message });
+            }
+
+            if (!conversationId || (!content && normalizedAttachments.length === 0)) {
                 return res.status(400).json({ error: 'Missing conversationId or content' });
             }
 
@@ -302,11 +421,11 @@ cds.on('served', async () => {
             };
             await db.run(INSERT.into('ai.chat.Messages').entries(userMessage));
 
-            if (attachments && attachments.length > 0) {
-                await saveAttachments(db, attachments, userMessage.ID);
+            if (normalizedAttachments.length > 0) {
+                await saveAttachments(db, normalizedAttachments, userMessage.ID);
             }
 
-            const aiMessages = await buildAiMessages(db, userId, conversationId, content, attachments);
+            const aiMessages = await buildAiMessages(db, userId, conversationId, content, normalizedAttachments);
 
             // Set up SSE headers
             res.setHeader('Content-Type', 'text/event-stream');
@@ -342,7 +461,7 @@ cds.on('served', async () => {
                 stream.on('end', async () => {
                     await processStreamEnd(db, {
                         assistantMessageId, conversationId, conversation,
-                        content, attachments, fullContent, userId
+                        content, attachments: normalizedAttachments, fullContent, userId
                     });
                     res.write(`data: ${JSON.stringify({ type: 'done', id: assistantMessageId })}\n\n`);
                     res.end();
@@ -634,28 +753,12 @@ function setupWebSocket(httpServer) {
     });
 
     wss.on('connection', async (ws, req) => {
-        // Try to get user info from headers (no query string tokens for security)
         let user = null;
-
-        // 1. Try Authorization header (set by approuter)
-        const authHeader = req.headers.authorization;
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            user = decodeUserFromToken(authHeader.substring(7));
-        }
-
-        // 2. Try x-approuter-authorization header
-        if (!user) {
-            const approuterAuth = req.headers['x-approuter-authorization'];
-            if (approuterAuth && approuterAuth.startsWith('Bearer ')) {
-                user = decodeUserFromToken(approuterAuth.substring(7));
-            }
-        }
-
-        // 3. Try x-forwarded-user header (sometimes set by proxies)
-        if (!user) {
-            const forwardedUser = req.headers['x-forwarded-user'] || req.headers['x-user-id'];
-            if (forwardedUser) {
-                user = { id: forwardedUser, email: null, name: forwardedUser };
+        try {
+            user = await getUserFromRequest(req);
+        } catch (error) {
+            if (!xssec.errors?.ValidationError || !(error instanceof xssec.errors.ValidationError)) {
+                console.error('WebSocket authentication error:', error);
             }
         }
 
@@ -694,8 +797,16 @@ function setupWebSocket(httpServer) {
  */
 async function handleChatMessage(ws, user, data) {
     const { conversationId, content, attachments } = data;
+    let normalizedAttachments = [];
 
-    if (!conversationId || (!content && (!attachments || attachments.length === 0))) {
+    try {
+        normalizedAttachments = validateAndNormalizeAttachments(attachments);
+    } catch (validationError) {
+        ws.send(JSON.stringify({ type: 'error', message: validationError.message }));
+        return;
+    }
+
+    if (!conversationId || (!content && normalizedAttachments.length === 0)) {
         ws.send(JSON.stringify({ type: 'error', message: 'Missing conversationId or content' }));
         return;
     }
@@ -721,13 +832,13 @@ async function handleChatMessage(ws, user, data) {
     };
     await db.run(INSERT.into('ai.chat.Messages').entries(userMessage));
 
-    if (attachments && attachments.length > 0) {
-        await saveAttachments(db, attachments, userMessage.ID);
+    if (normalizedAttachments.length > 0) {
+        await saveAttachments(db, normalizedAttachments, userMessage.ID);
     }
 
     ws.send(JSON.stringify({ type: 'user_message', id: userMessage.ID }));
 
-    const aiMessages = await buildAiMessages(db, user.id, conversationId, content, attachments);
+    const aiMessages = await buildAiMessages(db, user.id, conversationId, content, normalizedAttachments);
 
     const assistantMessageId = uuidv4();
     ws.send(JSON.stringify({ type: 'assistant_start', id: assistantMessageId }));
@@ -754,7 +865,7 @@ async function handleChatMessage(ws, user, data) {
         stream.on('end', async () => {
             await processStreamEnd(db, {
                 assistantMessageId, conversationId, conversation,
-                content, attachments, fullContent, userId: user.id
+                content, attachments: normalizedAttachments, fullContent, userId: user.id
             });
             ws.send(JSON.stringify({ type: 'done', id: assistantMessageId }));
         });

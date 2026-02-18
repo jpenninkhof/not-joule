@@ -4,15 +4,46 @@
 
 const ODATA_BASE = '/odata/v4/chat';
 const API_BASE = '/api';
+const csrfTokenCache = new Map();
+
+async function getCsrfToken(url) {
+  const scope = url.startsWith('/odata/') ? 'odata' : 'api';
+  if (csrfTokenCache.has(scope)) {
+    return csrfTokenCache.get(scope);
+  }
+
+  const fetchUrl = scope === 'odata' ? `${ODATA_BASE}/$metadata` : `${API_BASE}/health`;
+  const response = await fetch(fetchUrl, {
+    method: 'GET',
+    headers: {
+      'x-csrf-token': 'fetch',
+    },
+  });
+
+  const token = response.headers.get('x-csrf-token') || '';
+  if (token) {
+    csrfTokenCache.set(scope, token);
+  }
+  return token;
+}
 
 /**
  * Fetch wrapper with error handling
  */
 async function fetchAPI(url, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const needsCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+  let csrfToken = '';
+
+  if (needsCsrf) {
+    csrfToken = await getCsrfToken(url);
+  }
+
   const response = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
       ...options.headers,
     },
   });
@@ -82,15 +113,17 @@ export async function sendMessage(conversationId, content) {
  */
 export function streamMessage(conversationId, message, onChunk, onComplete, onError) {
   const controller = new AbortController();
-  
-  fetch(`${API_BASE}/chat/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ conversationId, content: message }),
-    signal: controller.signal,
-  })
+
+  getCsrfToken(`${API_BASE}/chat/stream`)
+    .then((csrfToken) => fetch(`${API_BASE}/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+      },
+      body: JSON.stringify({ conversationId, content: message }),
+      signal: controller.signal,
+    }))
     .then(async (response) => {
       if (!response.ok) {
         const error = await response.json().catch(() => ({ error: 'Stream failed' }));

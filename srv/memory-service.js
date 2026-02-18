@@ -526,11 +526,18 @@ Your response (JSON only):`;
     async deleteMemory(memoryId, userId) {
         try {
             const db = await cds.connect.to('db');
-            await db.run(
+            const deleted = await db.run(
                 DELETE.from('ai.chat.UserMemories')
                     .where({ ID: memoryId, userId: userId })
             );
-            return true;
+
+            if (typeof deleted === 'number') {
+                return deleted > 0;
+            }
+            if (deleted && typeof deleted.affectedRows === 'number') {
+                return deleted.affectedRows > 0;
+            }
+            return false;
         } catch (error) {
             console.error('Error deleting memory:', error);
             return false;

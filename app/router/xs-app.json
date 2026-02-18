@@ -15,7 +15,7 @@
       "target": "/odata/$1",
       "destination": "srv-api",
       "authenticationType": "xsuaa",
-      "csrfProtection": false
+      "csrfProtection": true
     },
     {
       "source": "^/ws/(.*)$",
@@ -28,21 +28,21 @@
       "target": "/api/chat/stream",
       "destination": "srv-api",
       "authenticationType": "xsuaa",
-      "csrfProtection": false
+      "csrfProtection": true
     },
     {
       "source": "^/api/conversation(.*)$",
       "target": "/api/conversation$1",
       "destination": "srv-api",
       "authenticationType": "xsuaa",
-      "csrfProtection": false
+      "csrfProtection": true
     },
     {
       "source": "^/api/(.*)$",
       "target": "/api/$1",
       "destination": "srv-api",
       "authenticationType": "xsuaa",
-      "csrfProtection": false
+      "csrfProtection": true
     },
     {
       "source": "^/assets/(.*)$",

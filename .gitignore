@@ -21,6 +21,8 @@ npm-debug.log*
 
 # Environment files with secrets
 default-env.json
+credentials/*.json
+!credentials/*.json.template
 .env
 .env.local
 .env.*.local
