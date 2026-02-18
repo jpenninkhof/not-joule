@@ -1,7 +1,6 @@
 namespace ai.chat;
 
 using { cuid, managed } from '@sap/cds/common';
-using { Attachments } from '@cap-js/attachments';
 
 /**
  * Conversations - represents a chat session
@@ -25,8 +24,13 @@ entity Messages : cuid, managed {
 
 /**
  * MessageAttachments - file attachments for messages
- * Uses @cap-js/attachments for object store storage
+ * Binary content is stored directly in HANA database
  */
-entity MessageAttachments : Attachments {
+entity MessageAttachments : cuid, managed {
     message      : Association to Messages;
+    filename     : String(255);
+    mimeType     : String(100);
+    content      : LargeBinary;
+    status       : String(20) default 'Clean';  // For compatibility
+    note         : String(500);
 }

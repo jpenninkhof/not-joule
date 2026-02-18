@@ -116,44 +116,32 @@ cds.on('served', async () => {
             
             await db.run(INSERT.into('ai.chat.Messages').entries(userMessage));
             
-            // Save attachments if any using @cap-js/attachments plugin
+            // Save attachments if any - using @cap-js/attachments plugin
+            // The plugin stores content in Object Store (S3/Azure/GCP) automatically
             if (attachments && attachments.length > 0) {
                 for (const att of attachments) {
-                    // Calculate size from base64 data if not provided
-                    let size = att.size;
                     let base64Data = att.data;
                     if (base64Data && base64Data.includes(',')) {
                         base64Data = base64Data.split(',')[1];
                     }
-                    if (!size && base64Data) {
-                        size = Math.floor((base64Data.length * 3) / 4);
-                    }
                     
                     const attachmentId = uuidv4();
+                    const contentBuffer = base64Data ? Buffer.from(base64Data, 'base64') : null;
                     
-                    // Insert attachment metadata
+                    // Insert attachment with content - the @cap-js/attachments plugin
+                    // will automatically store the content in Object Store
                     await db.run(INSERT.into('ai.chat.MessageAttachments').entries({
                         ID: attachmentId,
                         message_ID: userMessage.ID,
                         filename: att.name || 'attachment',
                         mimeType: att.type || 'application/octet-stream',
-                        status: 'Clean'
+                        content: contentBuffer,
+                        status: 'Clean',
+                        createdAt: new Date().toISOString(),
+                        modifiedAt: new Date().toISOString()
                     }));
                     
-                    // Store content via the attachments plugin
-                    // The plugin handles storing to object store
-                    if (base64Data) {
-                        const contentBuffer = Buffer.from(base64Data, 'base64');
-                        const ChatService = await cds.connect.to('ChatService');
-                        try {
-                            await ChatService.put(`/Attachments(${attachmentId})/content`, contentBuffer, {
-                                headers: { 'Content-Type': att.type || 'application/octet-stream' }
-                            });
-                        } catch (e) {
-                            // Fallback: store directly if plugin not available
-                            console.log('Attachments plugin PUT failed, using direct storage:', e.message);
-                        }
-                    }
+                    console.log('Stored attachment via attachments plugin:', attachmentId);
                 }
             }
             
@@ -414,6 +402,7 @@ cds.on('served', async () => {
             );
             
             // Delete attachments for all messages
+            // The @cap-js/attachments plugin will handle cleanup from Object Store
             for (const msg of messages) {
                 await db.run(DELETE.from('ai.chat.MessageAttachments').where({ message_ID: msg.ID }));
             }
@@ -462,7 +451,7 @@ cds.on('served', async () => {
         }
     });
     
-    // Get attachment data endpoint - fetches base64 data on demand
+    // Get attachment data endpoint - fetches content from Object Store via @cap-js/attachments plugin
     app.get('/api/attachment/:id', async (req, res) => {
         try {
             // Get user from JWT
@@ -490,7 +479,9 @@ cds.on('served', async () => {
             
             // Get the attachment metadata
             const attachment = await db.run(
-                SELECT.one.from('ai.chat.MessageAttachments').where({ ID: attachmentId })
+                SELECT.one.from('ai.chat.MessageAttachments')
+                    .columns('ID', 'message_ID', 'filename', 'mimeType', 'status')
+                    .where({ ID: attachmentId })
             );
             
             if (!attachment) {
@@ -514,22 +505,83 @@ cds.on('served', async () => {
                 return res.status(403).json({ error: 'Access denied' });
             }
             
-            // Get the attachment content from object store via the plugin
+            // Get the attachment content directly from the database
+            // Use raw SQL to avoid LOB locator issues with streaming
             let contentData = null;
+            
             try {
-                const ChatService = await cds.connect.to('ChatService');
-                const contentStream = await ChatService.get(`/Attachments(${attachmentId})/content`);
-                if (contentStream) {
-                    // Convert stream to buffer
-                    const chunks = [];
-                    for await (const chunk of contentStream) {
-                        chunks.push(chunk);
+                console.log('Fetching attachment content for ID:', attachmentId);
+                
+                // Use cds.run with raw SQL to get the content as a single operation
+                // This avoids the LOB locator invalidation issue
+                const hana = db.dbc; // Get the underlying HANA connection
+                
+                if (hana && hana.exec) {
+                    // Use HANA native query
+                    const result = await new Promise((resolve, reject) => {
+                        hana.exec(
+                            `SELECT "CONTENT" FROM "AI_CHAT_MESSAGEATTACHMENTS" WHERE "ID" = ?`,
+                            [attachmentId],
+                            (err, rows) => {
+                                if (err) reject(err);
+                                else resolve(rows);
+                            }
+                        );
+                    });
+                    
+                    if (result && result.length > 0 && result[0].CONTENT) {
+                        const content = result[0].CONTENT;
+                        if (Buffer.isBuffer(content)) {
+                            contentData = `data:${attachment.mimeType};base64,${content.toString('base64')}`;
+                            console.log('Retrieved attachment via native HANA query:', attachmentId, 'size:', content.length);
+                        }
                     }
-                    const buffer = Buffer.concat(chunks);
-                    contentData = `data:${attachment.mimeType};base64,${buffer.toString('base64')}`;
+                } else {
+                    // Fallback: try CDS query with immediate stream consumption
+                    const tx = db.tx();
+                    try {
+                        const fullAttachment = await tx.run(
+                            SELECT.one.from('ai.chat.MessageAttachments')
+                                .columns('content')
+                                .where({ ID: attachmentId })
+                        );
+                        
+                        if (fullAttachment && fullAttachment.content) {
+                            const content = fullAttachment.content;
+                            
+                            if (Buffer.isBuffer(content)) {
+                                contentData = `data:${attachment.mimeType};base64,${content.toString('base64')}`;
+                                console.log('Retrieved attachment from database as Buffer:', attachmentId, 'size:', content.length);
+                            } else if (typeof content === 'string') {
+                                contentData = content.startsWith('data:') 
+                                    ? content 
+                                    : `data:${attachment.mimeType};base64,${Buffer.from(content).toString('base64')}`;
+                                console.log('Retrieved attachment as string from database:', attachmentId, 'length:', content.length);
+                            } else if (content.pipe || content[Symbol.asyncIterator] || content.read) {
+                                // It's a stream - collect it immediately within the transaction
+                                console.log('Content is a stream, collecting chunks...');
+                                const chunks = [];
+                                for await (const chunk of content) {
+                                    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                                }
+                                const buffer = Buffer.concat(chunks);
+                                contentData = `data:${attachment.mimeType};base64,${buffer.toString('base64')}`;
+                                console.log('Retrieved attachment as stream from database:', attachmentId, 'size:', buffer.length);
+                            }
+                        }
+                        await tx.commit();
+                    } catch (txErr) {
+                        await tx.rollback();
+                        throw txErr;
+                    }
+                }
+                
+                if (!contentData) {
+                    console.log('No content found for attachment:', attachmentId);
                 }
             } catch (e) {
-                console.log('Failed to get content from object store:', e.message);
+                console.log('Failed to retrieve attachment content:', e.message);
+                console.log('Error stack:', e.stack);
             }
             
             // Return the attachment data
@@ -752,7 +804,8 @@ async function handleChatMessage(ws, user, data) {
     
     await db.run(INSERT.into('ai.chat.Messages').entries(userMessage));
     
-    // Save attachments if any using @cap-js/attachments plugin
+    // Save attachments if any - using @cap-js/attachments plugin
+    // The plugin stores content in Object Store (S3/Azure/GCP) automatically
     if (attachments && attachments.length > 0) {
         for (const att of attachments) {
             let base64Data = att.data;
@@ -761,28 +814,22 @@ async function handleChatMessage(ws, user, data) {
             }
             
             const attachmentId = uuidv4();
+            const contentBuffer = base64Data ? Buffer.from(base64Data, 'base64') : null;
             
-            // Insert attachment metadata
+            // Insert attachment with content - the @cap-js/attachments plugin
+            // will automatically store the content in Object Store
             await db.run(INSERT.into('ai.chat.MessageAttachments').entries({
                 ID: attachmentId,
                 message_ID: userMessage.ID,
                 filename: att.name || 'attachment',
                 mimeType: att.type || 'application/octet-stream',
-                status: 'Clean'
+                content: contentBuffer,
+                status: 'Clean',
+                createdAt: new Date().toISOString(),
+                modifiedAt: new Date().toISOString()
             }));
             
-            // Store content via the attachments plugin
-            if (base64Data) {
-                const contentBuffer = Buffer.from(base64Data, 'base64');
-                try {
-                    const ChatService = await cds.connect.to('ChatService');
-                    await ChatService.put(`/Attachments(${attachmentId})/content`, contentBuffer, {
-                        headers: { 'Content-Type': att.type || 'application/octet-stream' }
-                    });
-                } catch (e) {
-                    console.log('Attachments plugin PUT failed:', e.message);
-                }
-            }
+            console.log('WS: Stored attachment via attachments plugin:', attachmentId);
         }
     }
     
@@ -881,21 +928,16 @@ async function handleChatMessage(ws, user, data) {
             await db.run(INSERT.into('ai.chat.Messages').entries(assistantMessage));
             
             // Update conversation title if it's still the default
-            // Check if title needs updating (is default or empty)
             const needsTitleUpdate = !conversation.title || 
                                     conversation.title === 'New Conversation' || 
                                     conversation.title === 'New Chat';
             
             if (needsTitleUpdate) {
-                // Determine the best title source
                 let titleSource = '';
                 
-                // Priority 1: User's text content
                 if (content && content.trim()) {
                     titleSource = content.trim();
-                }
-                // Priority 2: Attachment name(s)
-                else if (attachments && attachments.length > 0) {
+                } else if (attachments && attachments.length > 0) {
                     const attachmentNames = attachments.map(a => a.name).filter(n => n);
                     if (attachmentNames.length > 0) {
                         titleSource = attachmentNames.length === 1 
@@ -903,16 +945,12 @@ async function handleChatMessage(ws, user, data) {
                             : `${attachmentNames[0]} (+${attachmentNames.length - 1} more)`;
                     }
                 }
-                // Priority 3: First part of AI response
                 if (!titleSource && fullContent) {
-                    // Extract first meaningful sentence or phrase from AI response
                     const firstLine = fullContent.split('\n')[0].trim();
-                    // Remove markdown headers
                     titleSource = firstLine.replace(/^#+\s*/, '').trim();
                 }
                 
                 if (titleSource) {
-                    // Clean up the title
                     const title = titleSource.substring(0, 50) + (titleSource.length > 50 ? '...' : '');
                     await db.run(
                         UPDATE('ai.chat.Conversations').set({ title: title, modifiedAt: new Date().toISOString() }).where({ ID: conversationId })

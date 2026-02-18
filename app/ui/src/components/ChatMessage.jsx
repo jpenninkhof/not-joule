@@ -5,10 +5,14 @@ import { getAttachment } from '../services/api';
 
 /**
  * Attachment item component - handles click to view/download
+ * Supports both old field names (name, type) and new @cap-js/attachments field names (filename, mimeType)
  */
 function AttachmentItem({ attachment }) {
   const [loading, setLoading] = useState(false);
-  const isImage = attachment.type?.startsWith('image/');
+  // Support both old and new field names
+  const attachmentName = attachment.name || attachment.filename || 'attachment';
+  const attachmentType = attachment.type || attachment.mimeType || 'application/octet-stream';
+  const isImage = attachmentType?.startsWith('image/');
   
   const handleClick = async () => {
     // If we already have the data (from a just-sent message), use it directly
@@ -18,15 +22,15 @@ function AttachmentItem({ attachment }) {
         const win = window.open();
         win.document.write(`
           <html>
-            <head><title>${attachment.name}</title></head>
+            <head><title>${attachmentName}</title></head>
             <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a1a;">
-              <img src="${attachment.preview || attachment.data}" alt="${attachment.name}" style="max-width:100%;max-height:100vh;"/>
+              <img src="${attachment.preview || attachment.data}" alt="${attachmentName}" style="max-width:100%;max-height:100vh;"/>
             </body>
           </html>
         `);
       } else {
         // Download file
-        downloadFile(attachment.preview || attachment.data, attachment.name, attachment.type);
+        downloadFile(attachment.preview || attachment.data, attachmentName, attachmentType);
       }
       return;
     }
@@ -83,7 +87,7 @@ function AttachmentItem({ attachment }) {
           {(attachment.preview || attachment.data) ? (
             <img
               src={attachment.preview || attachment.data}
-              alt={attachment.name}
+              alt={attachmentName}
               className="max-w-[200px] max-h-[200px] rounded-lg border border-dark-600 object-cover hover:opacity-90 transition-opacity"
             />
           ) : (
@@ -123,7 +127,7 @@ function AttachmentItem({ attachment }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           )}
-          <span className="text-sm text-dark-200">{attachment.name}</span>
+          <span className="text-sm text-dark-200">{attachmentName}</span>
           <svg className="w-4 h-4 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
@@ -144,14 +148,27 @@ const ChatbotLogo = ({ className }) => (
  * Chat message component with markdown support
  */
 export function ChatMessage({ message }) {
+  const [copied, setCopied] = useState(false);
   const isUser = message.role === 'user';
   const isStreaming = message.isStreaming;
   const isError = message.isError;
 
+  const handleCopyMessage = async () => {
+    if (message.content) {
+      try {
+        await navigator.clipboard.writeText(message.content);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
+    }
+  };
+
   return (
     <div
       className={`
-        py-6 px-4 md:px-8 message-enter
+        py-6 px-4 md:px-8 message-enter group/message
         ${isUser ? 'bg-dark-900' : 'bg-dark-800'}
       `}
     >
@@ -183,9 +200,30 @@ export function ChatMessage({ message }) {
         </div>
 
         {/* Message content */}
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm text-dark-300 mb-1">
-            {isUser ? 'You' : 'Not Joule'}
+        <div className="flex-1 min-w-0 relative">
+          <div className="flex items-center justify-between">
+            <div className="font-medium text-sm text-dark-300 mb-1">
+              {isUser ? 'You' : 'Not Joule'}
+            </div>
+            
+            {/* Copy button for assistant messages - top right */}
+            {!isUser && message.content && !isStreaming && (
+              <button
+                onClick={handleCopyMessage}
+                className="p-1.5 rounded text-dark-400 hover:text-dark-200 hover:bg-dark-700 transition-all opacity-0 group-hover/message:opacity-100"
+                title={copied ? 'Copied!' : 'Copy response'}
+              >
+                {copied ? (
+                  <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                )}
+              </button>
+            )}
           </div>
           
           {/* Attachments display */}
@@ -300,6 +338,7 @@ export function ChatMessage({ message }) {
               <span className="typing-cursor inline-block w-2 h-5 bg-accent-primary ml-0.5 align-middle" />
             )}
           </div>
+          
         </div>
       </div>
     </div>

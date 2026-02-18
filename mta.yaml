@@ -16,7 +16,7 @@ modules:
   # React Webapp (build only, not deployed)
   - name: ai-chat-app-webapp
     type: html5
-    path: app/webapp
+    path: app/ui
     build-parameters:
       builder: custom
       commands:
@@ -119,7 +119,7 @@ resources:
         clientsecret: "abc8d46f-1cc0-46df-a842-df97e8bbfe9a$PcoQ5QoWwB7bhfNRC6VwqfNuFJttdQXaBtKmHcu2NOo="
         url: "https://btp-ca-nl-ai-core.authentication.eu10.hana.ondemand.com"
 
-  # Object Store Service for attachments
+  # Object Store Service for Attachments
   - name: ai-chat-app-objectstore
     type: org.cloudfoundry.managed-service
     parameters:

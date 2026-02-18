@@ -34,10 +34,10 @@ export async function getConversations() {
 }
 
 /**
- * Get a single conversation with messages
+ * Get a single conversation with messages and attachments
  */
 export async function getConversation(id) {
-  const data = await fetchAPI(`${ODATA_BASE}/Conversations(${id})?$expand=messages($orderby=createdAt asc)`);
+  const data = await fetchAPI(`${ODATA_BASE}/Conversations(${id})?$expand=messages($orderby=createdAt asc;$expand=attachments)`);
   return data;
 }
 

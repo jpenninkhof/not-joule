@@ -56,12 +56,12 @@ module.exports = class ChatService extends cds.ApplicationService {
                     
                     conversation.messages = await db.run(messagesQuery);
                     
-                    // Load attachments for each message (without the data field to save memory)
+                    // Load attachments for each message (without the content field to save memory)
                     for (const msg of conversation.messages) {
                         const attachments = await db.run(
-                            SELECT.from('ai.chat.Attachments')
+                            SELECT.from('ai.chat.MessageAttachments')
                                 .where({ message_ID: msg.ID })
-                                .columns('ID', 'name', 'type', 'size')
+                                .columns('ID', 'filename', 'mimeType', 'status')
                         );
                         if (attachments.length > 0) {
                             msg.attachments = attachments;
@@ -129,7 +129,7 @@ module.exports = class ChatService extends cds.ApplicationService {
             
             // Delete attachments for all messages
             for (const msg of messages) {
-                await db.run(DELETE.from('ai.chat.Attachments').where({ message_ID: msg.ID }));
+                await db.run(DELETE.from('ai.chat.MessageAttachments').where({ message_ID: msg.ID }));
             }
             
             // Delete messages
