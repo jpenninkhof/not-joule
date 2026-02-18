@@ -109,15 +109,10 @@ resources:
       service-plan: hdi-shared
 
   # AI Core Service (User-Provided)
+  # NOTE: Create this service manually before deployment:
+  # cf cups ai-chat-app-aicore -p '{"serviceurls":{"AI_API_URL":"<AI_API_URL>"},"clientid":"<CLIENT_ID>","clientsecret":"<CLIENT_SECRET>","url":"<AUTH_URL>"}'
   - name: ai-chat-app-aicore
-    type: org.cloudfoundry.user-provided-service
-    parameters:
-      config:
-        serviceurls:
-          AI_API_URL: "https://api.ai.prod.eu-central-1.aws.ml.hana.ondemand.com"
-        clientid: "sb-2a2f5550-51ad-4d3a-8f0b-47d7c3ec8bb0!b639660|aicore!b540"
-        clientsecret: "abc8d46f-1cc0-46df-a842-df97e8bbfe9a$PcoQ5QoWwB7bhfNRC6VwqfNuFJttdQXaBtKmHcu2NOo="
-        url: "https://btp-ca-nl-ai-core.authentication.eu10.hana.ondemand.com"
+    type: org.cloudfoundry.existing-service
 
   # Object Store Service for Attachments
   - name: ai-chat-app-objectstore
