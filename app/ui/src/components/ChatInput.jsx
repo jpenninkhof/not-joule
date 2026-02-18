@@ -85,6 +85,18 @@ export function ChatInput({ onSend, isStreaming, onStop, disabled, hideBorder = 
     }
   }, [message]);
 
+  // Track previous streaming state to detect when streaming completes
+  const wasStreamingRef = useRef(isStreaming);
+  
+  // Auto-focus input when streaming completes
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming) {
+      // Streaming just completed, focus the input
+      textareaRef.current?.focus();
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
   // Process and add files
   const processFiles = useCallback(async (files) => {
     setIsProcessing(true);

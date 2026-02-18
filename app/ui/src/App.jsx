@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './components/ChatMessage';
 import { ChatInput } from './components/ChatInput';
@@ -193,8 +193,8 @@ function App() {
         </header>
 
         {/* Messages area */}
-        <div className="flex-1 overflow-y-auto flex flex-col">
-          {messages.length === 0 ? (
+        {messages.length === 0 ? (
+          <div className="flex-1 overflow-y-auto flex flex-col">
             <WelcomeScreen 
               onExampleClick={handleExampleClick} 
               ChatbotLogo={ChatbotLogo}
@@ -204,8 +204,11 @@ function App() {
               onStop={stopStreaming}
               isLoading={isLoading}
             />
-          ) : (
-            <>
+          </div>
+        ) : (
+          <>
+            {/* Scrollable messages container */}
+            <div className="flex-1 overflow-y-auto">
               {messages.map((msg, index) => (
                 <ChatMessage key={msg.ID || index} message={msg} />
               ))}
@@ -217,20 +220,140 @@ function App() {
                   {error}
                 </div>
               )}
-              
-              {/* Input area - only shown when there are messages */}
+            </div>
+            
+            {/* Input area - fixed at bottom when there are messages */}
+            <div className="flex-shrink-0">
               <ChatInput
                 onSend={sendMessage}
                 isStreaming={isStreaming}
                 onStop={stopStreaming}
                 disabled={isLoading}
               />
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        )}
       </main>
     </div>
   );
+}
+
+// Icon components for suggestions
+const SuggestionIcons = {
+  lightbulb: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+    </svg>
+  ),
+  code: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+    </svg>
+  ),
+  question: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  ),
+  mobile: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+    </svg>
+  ),
+  document: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    </svg>
+  ),
+  chart: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  ),
+  globe: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  ),
+  pencil: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+    </svg>
+  ),
+  chat: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+    </svg>
+  ),
+  database: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+    </svg>
+  ),
+  shield: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+    </svg>
+  ),
+  rocket: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+    </svg>
+  ),
+};
+
+// All available suggestions pool
+const allSuggestions = [
+  // Technology & Science
+  { text: "Explain quantum computing in simple terms", icon: "lightbulb", gradient: "from-purple-500/20 to-blue-500/20" },
+  { text: "What is machine learning and how does it work?", icon: "lightbulb", gradient: "from-purple-500/20 to-blue-500/20" },
+  { text: "Explain the difference between AI and machine learning", icon: "lightbulb", gradient: "from-purple-500/20 to-blue-500/20" },
+  { text: "How does blockchain technology work?", icon: "lightbulb", gradient: "from-purple-500/20 to-blue-500/20" },
+  { text: "What are the latest trends in cloud computing?", icon: "globe", gradient: "from-cyan-500/20 to-blue-500/20" },
+  
+  // Programming & Development
+  { text: "Write a Python function to sort a list", icon: "code", gradient: "from-green-500/20 to-teal-500/20" },
+  { text: "Explain the difference between REST and GraphQL", icon: "code", gradient: "from-green-500/20 to-teal-500/20" },
+  { text: "How do I implement authentication in a web app?", icon: "shield", gradient: "from-red-500/20 to-orange-500/20" },
+  { text: "What are microservices and when should I use them?", icon: "database", gradient: "from-indigo-500/20 to-purple-500/20" },
+  { text: "Help me debug this JavaScript code", icon: "code", gradient: "from-green-500/20 to-teal-500/20" },
+  { text: "What are the best practices for REST API design?", icon: "question", gradient: "from-orange-500/20 to-yellow-500/20" },
+  { text: "Explain Docker containers and how to use them", icon: "database", gradient: "from-indigo-500/20 to-purple-500/20" },
+  
+  // Business & Productivity
+  { text: "Help me brainstorm ideas for a mobile app", icon: "mobile", gradient: "from-pink-500/20 to-rose-500/20" },
+  { text: "Write a professional email to a client", icon: "pencil", gradient: "from-amber-500/20 to-orange-500/20" },
+  { text: "Create a project plan for a software launch", icon: "document", gradient: "from-blue-500/20 to-indigo-500/20" },
+  { text: "Help me prepare for a job interview", icon: "chat", gradient: "from-teal-500/20 to-cyan-500/20" },
+  { text: "Summarize the key points of agile methodology", icon: "rocket", gradient: "from-violet-500/20 to-purple-500/20" },
+  
+  // Data & Analytics
+  { text: "How do I analyze data with Python pandas?", icon: "chart", gradient: "from-emerald-500/20 to-green-500/20" },
+  { text: "Explain SQL joins with examples", icon: "database", gradient: "from-indigo-500/20 to-purple-500/20" },
+  { text: "What are the best data visualization practices?", icon: "chart", gradient: "from-emerald-500/20 to-green-500/20" },
+  
+  // Creative & Writing
+  { text: "Help me write a compelling product description", icon: "pencil", gradient: "from-amber-500/20 to-orange-500/20" },
+  { text: "Generate creative names for my startup", icon: "lightbulb", gradient: "from-purple-500/20 to-blue-500/20" },
+  { text: "Write a blog post outline about technology trends", icon: "document", gradient: "from-blue-500/20 to-indigo-500/20" },
+  
+  // SAP Specific
+  { text: "Explain SAP HANA and its benefits", icon: "database", gradient: "from-indigo-500/20 to-purple-500/20" },
+  { text: "What is SAP BTP and how can I use it?", icon: "globe", gradient: "from-cyan-500/20 to-blue-500/20" },
+  { text: "Help me understand SAP Fiori design principles", icon: "mobile", gradient: "from-pink-500/20 to-rose-500/20" },
+  { text: "How do I create a CAP application?", icon: "code", gradient: "from-green-500/20 to-teal-500/20" },
+];
+
+/**
+ * Shuffle array using Fisher-Yates algorithm
+ */
+function shuffleArray(array) {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
 }
 
 /**
@@ -239,44 +362,14 @@ function App() {
 function WelcomeScreen({ onExampleClick, ChatbotLogo, modelName, onSend, isStreaming, onStop, isLoading }) {
   const [hoveredIndex, setHoveredIndex] = useState(null);
   
-  const suggestions = [
-    {
-      text: "Explain quantum computing in simple terms",
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-        </svg>
-      ),
-      gradient: "from-purple-500/20 to-blue-500/20"
-    },
-    {
-      text: "Write a Python function to sort a list",
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-        </svg>
-      ),
-      gradient: "from-green-500/20 to-teal-500/20"
-    },
-    {
-      text: "What are the best practices for REST API design?",
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      ),
-      gradient: "from-orange-500/20 to-yellow-500/20"
-    },
-    {
-      text: "Help me brainstorm ideas for a mobile app",
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-        </svg>
-      ),
-      gradient: "from-pink-500/20 to-rose-500/20"
-    },
-  ];
+  // Randomly select 4 suggestions on component mount
+  const suggestions = useMemo(() => {
+    const shuffled = shuffleArray(allSuggestions);
+    return shuffled.slice(0, 4).map(s => ({
+      ...s,
+      icon: SuggestionIcons[s.icon]
+    }));
+  }, []);
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8">
