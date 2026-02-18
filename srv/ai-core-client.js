@@ -1,5 +1,4 @@
 const https = require('https');
-const http = require('http');
 
 /**
  * AI Core Client
@@ -433,4 +432,12 @@ class AiCoreClient {
     }
 }
 
-module.exports = { AiCoreClient };
+let _sharedClient = null;
+function getSharedAiCoreClient() {
+    if (!_sharedClient) {
+        _sharedClient = new AiCoreClient();
+    }
+    return _sharedClient;
+}
+
+module.exports = { AiCoreClient, getSharedAiCoreClient };

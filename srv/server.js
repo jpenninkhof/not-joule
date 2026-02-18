@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const xsenv = require('@sap/xsenv');
 const xssec = require('@sap/xssec');
 const { memoryService } = require('./memory-service');
-const { AiCoreClient } = require('./ai-core-client');
+const { getSharedAiCoreClient } = require('./ai-core-client');
 
 // Try to load WebSocket, but don't fail if not available
 let WebSocket;
@@ -13,13 +13,9 @@ try {
     // WebSocket module not available
 }
 
-// Reuse a single AiCoreClient instance across requests
-let _aiCoreClient = null;
-function getAiCoreClient() {
-    if (!_aiCoreClient) {
-        _aiCoreClient = new AiCoreClient();
-    }
-    return _aiCoreClient;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUUID(value) {
+    return typeof value === 'string' && UUID_RE.test(value);
 }
 
 const MAX_ATTACHMENTS = Number(process.env.MAX_ATTACHMENTS || 5);
@@ -73,7 +69,7 @@ function decodeUserFromToken(token) {
 
 function extractBase64Data(data) {
     if (typeof data !== 'string') return '';
-    if (data.includes(',')) return data.split(',')[1];
+    if (data.startsWith('data:') && data.includes(',')) return data.split(',')[1];
     return data;
 }
 
@@ -354,7 +350,7 @@ async function processStreamEnd(db, { assistantMessageId, conversationId, conver
         } catch (memError) {
             console.error('Error processing memories:', memError);
         }
-    });
+    }).catch(err => console.error('Unhandled memory processing error:', err));
 }
 
 // ============ Server Bootstrap ============
@@ -371,6 +367,9 @@ cds.on('bootstrap', (app) => {
         res.header('Access-Control-Allow-Origin', origin);
         res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        if (process.env.NODE_ENV === 'production') {
+            res.header('Vary', 'Origin');
+        }
         if (req.method === 'OPTIONS') {
             return res.sendStatus(200);
         }
@@ -398,6 +397,9 @@ cds.on('served', async () => {
 
             if (!conversationId || (!content && normalizedAttachments.length === 0)) {
                 return res.status(400).json({ error: 'Missing conversationId or content' });
+            }
+            if (!isValidUUID(conversationId)) {
+                return res.status(400).json({ error: 'Invalid conversationId format' });
             }
 
             const db = await cds.connect.to('db');
@@ -439,7 +441,7 @@ cds.on('served', async () => {
             const assistantMessageId = uuidv4();
             res.write(`data: ${JSON.stringify({ type: 'assistant_start', id: assistantMessageId })}\n\n`);
 
-            const client = getAiCoreClient();
+            const client = getSharedAiCoreClient();
             let fullContent = '';
             const isAnthropic = client.modelType === 'anthropic';
 
@@ -459,10 +461,14 @@ cds.on('served', async () => {
                 });
 
                 stream.on('end', async () => {
-                    await processStreamEnd(db, {
-                        assistantMessageId, conversationId, conversation,
-                        content, attachments: normalizedAttachments, fullContent, userId
-                    });
+                    try {
+                        await processStreamEnd(db, {
+                            assistantMessageId, conversationId, conversation,
+                            content, attachments: normalizedAttachments, fullContent, userId
+                        });
+                    } catch (endError) {
+                        console.error('Error in stream end processing:', endError);
+                    }
                     res.write(`data: ${JSON.stringify({ type: 'done', id: assistantMessageId })}\n\n`);
                     res.end();
                 });
@@ -521,6 +527,9 @@ cds.on('served', async () => {
     app.delete('/api/conversation/:id', authMiddleware, async (req, res) => {
         try {
             const conversationId = req.params.id;
+            if (!isValidUUID(conversationId)) {
+                return res.status(400).json({ error: 'Invalid conversation ID format' });
+            }
             const db = await cds.connect.to('db');
 
             const conversation = await db.run(
@@ -534,8 +543,9 @@ cds.on('served', async () => {
                 SELECT.from('ai.chat.Messages').where({ conversation_ID: conversationId }).columns('ID')
             );
 
-            for (const msg of messages) {
-                await db.run(DELETE.from('ai.chat.MessageAttachments').where({ message_ID: msg.ID }));
+            const messageIds = messages.map(m => m.ID);
+            if (messageIds.length > 0) {
+                await db.run(DELETE.from('ai.chat.MessageAttachments').where({ message_ID: { in: messageIds } }));
             }
 
             await db.run(DELETE.from('ai.chat.Messages').where({ conversation_ID: conversationId }));
@@ -567,6 +577,9 @@ cds.on('served', async () => {
         try {
             const userId = req.user.id;
             const attachmentId = req.params.id;
+            if (!isValidUUID(attachmentId)) {
+                return res.status(400).json({ error: 'Invalid attachment ID format' });
+            }
             const db = await cds.connect.to('db');
 
             const attachment = await db.run(
@@ -703,7 +716,7 @@ cds.on('served', async () => {
     // --- Model info ---
     app.get('/api/model', async (req, res) => {
         try {
-            const client = getAiCoreClient();
+            const client = getSharedAiCoreClient();
             let modelName = process.env.AICORE_MODEL_NAME || 'Unknown Model';
 
             try {
@@ -843,7 +856,7 @@ async function handleChatMessage(ws, user, data) {
     const assistantMessageId = uuidv4();
     ws.send(JSON.stringify({ type: 'assistant_start', id: assistantMessageId }));
 
-    const client = getAiCoreClient();
+    const client = getSharedAiCoreClient();
     let fullContent = '';
     const isAnthropic = client.modelType === 'anthropic';
 
@@ -863,10 +876,14 @@ async function handleChatMessage(ws, user, data) {
         });
 
         stream.on('end', async () => {
-            await processStreamEnd(db, {
-                assistantMessageId, conversationId, conversation,
-                content, attachments: normalizedAttachments, fullContent, userId: user.id
-            });
+            try {
+                await processStreamEnd(db, {
+                    assistantMessageId, conversationId, conversation,
+                    content, attachments: normalizedAttachments, fullContent, userId: user.id
+                });
+            } catch (endError) {
+                console.error('Error in stream end processing:', endError);
+            }
             ws.send(JSON.stringify({ type: 'done', id: assistantMessageId }));
         });
 

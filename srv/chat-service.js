@@ -30,8 +30,6 @@ function extractReadKey(req, keyName = 'ID') {
 module.exports = class ChatService extends cds.ApplicationService {
     
     async init() {
-        const { Conversations, Messages } = this.entities;
-        
         // Filter conversations by current user - use on() handler to query db directly
         this.on('READ', 'Conversations', async (req) => {
             const userId = req.user.id;
@@ -156,9 +154,10 @@ module.exports = class ChatService extends cds.ApplicationService {
                 SELECT.from('ai.chat.Messages').where({ conversation_ID: conversationId }).columns('ID')
             );
             
-            // Delete attachments for all messages
-            for (const msg of messages) {
-                await db.run(DELETE.from('ai.chat.MessageAttachments').where({ message_ID: msg.ID }));
+            // Delete attachments for all messages in a single query
+            const messageIds = messages.map(m => m.ID);
+            if (messageIds.length > 0) {
+                await db.run(DELETE.from('ai.chat.MessageAttachments').where({ message_ID: { in: messageIds } }));
             }
             
             // Delete messages
@@ -268,8 +267,7 @@ module.exports = class ChatService extends cds.ApplicationService {
      * Call SAP AI Core API
      */
     async callAICore(messages) {
-        const { AiCoreClient } = require('./ai-core-client');
-        const client = new AiCoreClient();
-        return await client.chat(messages);
+        const { getSharedAiCoreClient } = require('./ai-core-client');
+        return await getSharedAiCoreClient().chat(messages);
     }
 };

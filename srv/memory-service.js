@@ -57,10 +57,9 @@ Your response (JSON only):`;
             const prompt = this.getExtractionPrompt().replace('{{conversation}}', conversationText);
 
             // Call AI Core to extract memories
-            const { AiCoreClient } = require('./ai-core-client');
-            const client = new AiCoreClient();
+            const { getSharedAiCoreClient } = require('./ai-core-client');
 
-            const response = await client.chat([
+            const response = await getSharedAiCoreClient().chat([
                 { role: 'user', content: prompt }
             ], { maxTokens: 500, temperature: 0.3 });
 
@@ -99,8 +98,8 @@ Your response (JSON only):`;
      */
     async embedText(text) {
         try {
-            const { AiCoreClient } = require('./ai-core-client');
-            const client = new AiCoreClient();
+            const { getSharedAiCoreClient } = require('./ai-core-client');
+            const client = getSharedAiCoreClient();
 
             // Get OAuth token
             const token = await client.getToken();
