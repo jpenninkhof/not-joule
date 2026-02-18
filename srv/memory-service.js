@@ -11,7 +11,7 @@ class MemoryService {
     constructor() {
         this.extractionPrompt = null;
         this.embeddingDeploymentId = process.env.AICORE_EMBEDDING_DEPLOYMENT_ID || null;
-        this.similarityThreshold = 0.92; // Threshold for deduplication
+        this.similarityThreshold = 0.85; // Threshold for deduplication (lowered for better matching)
         this.maxMemoriesPerExtraction = 3;
         this.maxRetrievedMemories = 5;
     }
@@ -307,7 +307,23 @@ Your response (JSON only):`;
     }
 
     /**
+     * Normalize text for comparison (lowercase, remove extra spaces, sort words)
+     * @param {string} text - The text to normalize
+     * @returns {string} Normalized text
+     */
+    normalizeForComparison(text) {
+        return text
+            .toLowerCase()
+            .replace(/[^\w\s]/g, '') // Remove punctuation
+            .split(/\s+/)
+            .sort()
+            .join(' ')
+            .trim();
+    }
+
+    /**
      * Check if a similar memory already exists (deduplication)
+     * Uses both vector similarity and text normalization
      * @param {string} userId - The user ID
      * @param {string} content - The memory content to check
      * @param {object} db - Database connection
@@ -315,6 +331,24 @@ Your response (JSON only):`;
      */
     async checkDuplicate(userId, content, db) {
         try {
+            // First, check for text-based duplicates (handles word order differences)
+            const normalizedContent = this.normalizeForComparison(content);
+            
+            const existingMemories = await db.run(
+                SELECT.from('ai.chat.UserMemories')
+                    .where({ userId: userId })
+                    .columns('content')
+            );
+            
+            for (const mem of existingMemories) {
+                const normalizedExisting = this.normalizeForComparison(mem.content);
+                if (normalizedContent === normalizedExisting) {
+                    console.log('Found text-based duplicate memory');
+                    return true;
+                }
+            }
+            
+            // Then check vector similarity
             const embedding = await this.embedText(content);
             if (!embedding) return false;
 
@@ -325,7 +359,7 @@ Your response (JSON only):`;
                 
                 const result = await new Promise((resolve, reject) => {
                     hana.exec(
-                        `SELECT TOP 1 "ID", COSINE_SIMILARITY("EMBEDDING", TO_REAL_VECTOR(?)) AS similarity
+                        `SELECT TOP 1 "ID", "CONTENT", COSINE_SIMILARITY("EMBEDDING", TO_REAL_VECTOR(?)) AS similarity
                          FROM "AI_CHAT_USERMEMORIES"
                          WHERE "USERID" = ?
                          ORDER BY similarity DESC`,
@@ -338,6 +372,7 @@ Your response (JSON only):`;
                 });
 
                 if (result && result.length > 0 && result[0].SIMILARITY >= this.similarityThreshold) {
+                    console.log(`Found vector-similar memory (${(result[0].SIMILARITY * 100).toFixed(1)}%): "${result[0].CONTENT.substring(0, 40)}..."`);
                     return true;
                 }
             }
