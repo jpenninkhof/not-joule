@@ -93,6 +93,7 @@ Your response (JSON only):`;
 
     /**
      * Generate a vector embedding for text using AI Core
+     * Supports both OpenAI-style and Amazon Titan embedding models
      * @param {string} text - The text to embed
      * @returns {Promise<Array<number>|null>} The embedding vector or null on error
      */
@@ -114,12 +115,25 @@ Your response (JSON only):`;
                 return this.generateMockEmbedding(text);
             }
 
-            const url = new URL(`/v2/inference/deployments/${deploymentId}/embeddings`, baseUrl);
-
-            const body = JSON.stringify({
-                input: text,
-                model: 'text-embedding-ada-002'
-            });
+            // Detect embedding model type from environment or default to titan
+            const embeddingModelType = process.env.AICORE_EMBEDDING_MODEL_TYPE || 'titan';
+            
+            let url, body;
+            
+            if (embeddingModelType === 'openai') {
+                // OpenAI-style embedding endpoint
+                url = new URL(`/v2/inference/deployments/${deploymentId}/embeddings`, baseUrl);
+                body = JSON.stringify({
+                    input: text,
+                    model: 'text-embedding-ada-002'
+                });
+            } else {
+                // Amazon Titan embedding model uses /invoke endpoint
+                url = new URL(`/v2/inference/deployments/${deploymentId}/invoke`, baseUrl);
+                body = JSON.stringify({
+                    inputText: text
+                });
+            }
 
             return new Promise((resolve, reject) => {
                 const https = require('https');
@@ -149,11 +163,21 @@ Your response (JSON only):`;
                                 return;
                             }
                             const json = JSON.parse(data);
-                            const embedding = json.data?.[0]?.embedding;
+                            
+                            let embedding;
+                            if (embeddingModelType === 'openai') {
+                                // OpenAI response format: { data: [{ embedding: [...] }] }
+                                embedding = json.data?.[0]?.embedding;
+                            } else {
+                                // Amazon Titan response format: { embedding: [...] }
+                                embedding = json.embedding;
+                            }
+                            
                             if (embedding && Array.isArray(embedding)) {
+                                console.log(`Generated embedding with ${embedding.length} dimensions`);
                                 resolve(embedding);
                             } else {
-                                console.error('Invalid embedding response format');
+                                console.error('Invalid embedding response format:', JSON.stringify(json).substring(0, 200));
                                 resolve(this.generateMockEmbedding(text));
                             }
                         } catch (e) {

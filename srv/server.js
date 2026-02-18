@@ -993,6 +993,27 @@ async function handleChatMessage(ws, user, data) {
         }
     }
     
+    // Retrieve relevant memories for this user and inject into system prompt
+    let systemPromptAddition = '';
+    try {
+        const relevantMemories = await memoryService.retrieveRelevantMemories(user.id, content || '');
+        systemPromptAddition = memoryService.formatMemoriesForPrompt(relevantMemories);
+        if (systemPromptAddition) {
+            console.log(`WS: Injecting ${relevantMemories.length} memories into system prompt for user ${user.id}`);
+        }
+    } catch (memError) {
+        console.error('WS: Error retrieving memories:', memError);
+    }
+    
+    // Add system message with memories if we have any
+    if (systemPromptAddition) {
+        // Prepend system message with memory context
+        aiMessages.unshift({
+            role: 'system',
+            content: `You are a helpful AI Assistant.${systemPromptAddition}`
+        });
+    }
+    
     // Create assistant message placeholder
     const assistantMessageId = uuidv4();
     ws.send(JSON.stringify({ type: 'assistant_start', id: assistantMessageId }));
@@ -1093,6 +1114,20 @@ async function handleChatMessage(ws, user, data) {
             }
             
             ws.send(JSON.stringify({ type: 'done', id: assistantMessageId }));
+            
+            // Process memory extraction asynchronously (don't block the response)
+            setImmediate(async () => {
+                try {
+                    console.log('WS: Extracting memories from conversation for user:', user.id);
+                    const recentMessages = [
+                        { role: 'user', content: content },
+                        { role: 'assistant', content: fullContent }
+                    ];
+                    await memoryService.processConversationTurn(user.id, conversationId, recentMessages);
+                } catch (memError) {
+                    console.error('WS: Error processing memories:', memError);
+                }
+            });
         });
         
         stream.on('error', (error) => {
