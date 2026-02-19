@@ -15,6 +15,7 @@ function App() {
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [user, setUser] = useState(null);
   const [modelName, setModelName] = useState('Unknown model');
+  const [sessionExpired, setSessionExpired] = useState(false);
   const messagesEndRef = useRef(null);
 
   const {
@@ -37,6 +38,13 @@ function App() {
     loadConversationsList();
     loadUserInfo();
     loadModelInfo();
+  }, []);
+
+  // Listen for session expiry from any layer (HTTP, SSE, WebSocket)
+  useEffect(() => {
+    const handler = () => setSessionExpired(true);
+    window.addEventListener('session-expired', handler);
+    return () => window.removeEventListener('session-expired', handler);
   }, []);
 
   // Scroll to bottom when messages change
@@ -146,6 +154,28 @@ function App() {
 
   return (
     <div className="h-screen flex bg-dark-900">
+      {/* Session expired overlay */}
+      {sessionExpired && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">
+          <div className="bg-dark-800 border border-dark-600 rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-2xl">
+            <div className="w-14 h-14 mx-auto mb-4 bg-amber-500/10 rounded-full flex items-center justify-center">
+              <svg className="w-7 h-7 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-semibold text-dark-100 mb-2">Session timed out</h2>
+            <p className="text-dark-400 text-sm mb-6">
+              Your session has expired. Please refresh the page to re-authenticate and continue.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full py-2.5 px-4 bg-accent-primary hover:bg-accent-primary/90 text-white font-medium rounded-lg transition-colors"
+            >
+              Refresh page
+            </button>
+          </div>
+        </div>
+      )}
       {/* Sidebar */}
       <Sidebar
         conversations={conversations}

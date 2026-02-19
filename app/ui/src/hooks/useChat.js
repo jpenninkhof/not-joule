@@ -68,12 +68,26 @@ export function useChat() {
         console.log('WebSocket closed:', event.code, event.reason);
         setWsConnected(false);
         wsRef.current = null;
-        
-        // Attempt to reconnect after a delay (unless it was a clean close)
-        if (event.code !== 1000 && event.code !== 1008) {
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connectWebSocket();
-          }, 3000);
+
+        if (event.code === 1008) {
+          // Policy violation — server rejected the connection due to auth failure
+          window.dispatchEvent(new CustomEvent('session-expired'));
+        } else if (event.code !== 1000) {
+          // Unexpected close — probe auth before deciding whether to reconnect
+          fetch('/api/health').then((res) => {
+            if (res.status === 401) {
+              window.dispatchEvent(new CustomEvent('session-expired'));
+            } else {
+              reconnectTimeoutRef.current = setTimeout(() => {
+                connectWebSocket();
+              }, 3000);
+            }
+          }).catch(() => {
+            // Network error — still attempt reconnect
+            reconnectTimeoutRef.current = setTimeout(() => {
+              connectWebSocket();
+            }, 3000);
+          });
         }
       };
 

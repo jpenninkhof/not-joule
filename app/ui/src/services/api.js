@@ -6,6 +6,10 @@ const ODATA_BASE = '/odata/v4/chat';
 const API_BASE = '/api';
 const csrfTokenCache = new Map();
 
+function fireSessionExpired() {
+  window.dispatchEvent(new CustomEvent('session-expired'));
+}
+
 async function getCsrfToken(url) {
   const scope = url.startsWith('/odata/') ? 'odata' : 'api';
   if (csrfTokenCache.has(scope)) {
@@ -19,6 +23,11 @@ async function getCsrfToken(url) {
       'x-csrf-token': 'fetch',
     },
   });
+
+  if (response.status === 401) {
+    fireSessionExpired();
+    throw new Error('Session expired');
+  }
 
   const token = response.headers.get('x-csrf-token') || '';
   if (token) {
@@ -47,6 +56,11 @@ async function fetchAPI(url, options = {}) {
       ...options.headers,
     },
   });
+
+  if (response.status === 401) {
+    fireSessionExpired();
+    throw new Error('Session expired');
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Unknown error' }));
@@ -126,6 +140,11 @@ export function streamMessage(conversationId, message, attachments, onChunk, onC
       signal: controller.signal,
     }))
     .then(async (response) => {
+      if (response.status === 401) {
+        fireSessionExpired();
+        throw new Error('Session expired');
+      }
+
       if (!response.ok) {
         const error = await response.json().catch(() => ({ error: 'Stream failed' }));
         throw new Error(error.error || 'Stream failed');
