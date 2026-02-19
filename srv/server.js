@@ -368,6 +368,7 @@ function generateTitle(content, attachments, fullContent) {
  */
 function parseStreamChunk(buffer, isAnthropic) {
     const deltas = [];
+    const events = [];
     const lines = buffer.split('\n');
     const remaining = lines.pop() || '';
 
@@ -383,6 +384,8 @@ function parseStreamChunk(buffer, isAnthropic) {
                 if (isAnthropic) {
                     if (json.type === 'content_block_delta' && json.delta?.type === 'text_delta') {
                         delta = json.delta.text;
+                    } else if (json.type === 'web_search_start') {
+                        events.push(json);
                     }
                 } else {
                     delta = json.choices?.[0]?.delta?.content;
@@ -395,7 +398,7 @@ function parseStreamChunk(buffer, isAnthropic) {
         }
     }
 
-    return { deltas, remaining };
+    return { deltas, events, remaining };
 }
 
 function closeAiStream(stream) {
@@ -627,8 +630,12 @@ cds.on('served', async () => {
                 stream.on('data', (chunk) => {
                     if (isClosed) return;
                     buffer += chunk.toString();
-                    const { deltas, remaining } = parseStreamChunk(buffer, isAnthropic);
+                    const { deltas, events, remaining } = parseStreamChunk(buffer, isAnthropic);
                     buffer = remaining;
+
+                    for (const event of events) {
+                        sendSse(res, event);
+                    }
 
                     for (const delta of deltas) {
                         fullContent += delta;
@@ -1104,8 +1111,12 @@ async function handleChatMessage(ws, user, data) {
         stream.on('data', (chunk) => {
             if (isClosed) return;
             buffer += chunk.toString();
-            const { deltas, remaining } = parseStreamChunk(buffer, isAnthropic);
+            const { deltas, events, remaining } = parseStreamChunk(buffer, isAnthropic);
             buffer = remaining;
+
+            for (const event of events) {
+                sendWs(ws, event);
+            }
 
             for (const delta of deltas) {
                 fullContent += delta;

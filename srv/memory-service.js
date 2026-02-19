@@ -56,7 +56,7 @@ Your response (JSON only):`;
             const response = await getSharedAiCoreClient().chat([
                 { role: 'system', content: this.getExtractionPrompt() },
                 { role: 'user', content: conversationText }
-            ], { maxTokens: 500, temperature: 0.3 });
+            ], { maxTokens: 500, temperature: 0.3, enableTools: false });
 
             // Parse the response
             let memories = [];

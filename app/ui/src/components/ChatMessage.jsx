@@ -143,6 +143,7 @@ export function ChatMessage({ message }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === 'user';
   const isStreaming = message.isStreaming;
+  const isSearching = message.isSearching;
   const isError = message.isError;
 
   const handleCopyMessage = async () => {
@@ -233,6 +234,22 @@ export function ChatMessage({ message }) {
               ${isError ? 'text-red-400' : ''}
             `}
           >
+            {isSearching && (
+              <div className="flex items-center gap-2 text-sm text-dark-300 mb-2">
+                <svg className="w-4 h-4 flex-shrink-0 animate-spin text-accent-primary" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span>
+                  Searching the web
+                  {message.searchQueries?.length > 0 && (
+                    <> for <em>{message.searchQueries[0]}</em>{message.searchQueries.length > 1 && ` (+${message.searchQueries.length - 1} more)`}</>
+                  )}
+                  …
+                </span>
+              </div>
+            )}
+
             {message.content ? (
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
@@ -317,7 +334,7 @@ export function ChatMessage({ message }) {
               >
                 {message.content}
               </ReactMarkdown>
-            ) : isStreaming ? (
+            ) : isStreaming && !isSearching ? (
               <span className="inline-flex items-center gap-1">
                 <span className="w-2 h-2 bg-accent-primary rounded-full animate-pulse" />
                 <span className="w-2 h-2 bg-accent-primary rounded-full animate-pulse delay-75" />

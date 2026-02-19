@@ -125,8 +125,9 @@ export async function sendMessage(conversationId, content) {
  * @param {function} onChunk - Callback for each chunk received
  * @param {function} onComplete - Callback when streaming is complete
  * @param {function} onError - Callback for errors
+ * @param {function} [onEvent] - Callback for non-content events (e.g. web_search_start)
  */
-export function streamMessage(conversationId, message, attachments, onChunk, onComplete, onError) {
+export function streamMessage(conversationId, message, attachments, onChunk, onComplete, onError, onEvent) {
   const controller = new AbortController();
 
   getCsrfToken(`${API_BASE}/chat/stream`)
@@ -173,6 +174,8 @@ export function streamMessage(conversationId, message, attachments, onChunk, onC
                 onComplete(data.id);
               } else if (data.type === 'error') {
                 onError(new Error(data.message));
+              } else if (onEvent) {
+                onEvent(data);
               }
             } catch (e) {
               // Skip invalid JSON

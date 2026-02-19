@@ -6,6 +6,7 @@ A modern AI chat interface built with SAP CAP (Cloud Application Programming Mod
 
 - **Modern Dark UI** - Clean, responsive interface with conversation sidebar
 - **Real-time Streaming** - WebSocket primary transport with SSE fallback for progressive responses
+- **Web Search** - Live web search via Perplexity Sonar with a "Searching the web…" indicator in the UI
 - **File Attachments** - Upload and send files (images, documents) alongside messages
 - **Secure Authentication** - XSUAA-based user authentication via SAP App Router
 - **Persistent Storage** - Chat history stored in SAP HANA database
@@ -144,9 +145,13 @@ The other services (XSUAA, HANA, Object Store) are created automatically by the 
 ### 2. Build and Deploy
 
 ```bash
+cd app/ui && npm run build && cd ../..
+cp -r app/ui/dist/* app/router/webapp/
 mbt build
 cf deploy mta_archives/ai-chat-app_1.0.0.mtar
 ```
+
+> **Note:** The `cp` step is required because `mbt` snapshots the `app/router` directory before copying in the fresh UI build artifacts. Without it, the deployed router will serve a stale bundle.
 
 ### 3. Assign Role Collection
 
@@ -166,6 +171,7 @@ Set these environment variables (or configure them in `mta.yaml`):
 |---|---|
 | `AICORE_DEPLOYMENT_ID` | Deployment ID for the chat model |
 | `AICORE_EMBEDDING_DEPLOYMENT_ID` | Deployment ID for the embedding model (memory) |
+| `AICORE_PERPLEXITY_DEPLOYMENT_ID` | Deployment ID for Perplexity Sonar (web search). Omit to disable web search. |
 | `AICORE_RESOURCE_GROUP` | AI Core resource group (default: `default`) |
 | `AICORE_MODEL_NAME` | Display name for the model (shown in UI) |
 
@@ -217,9 +223,12 @@ The server streams back events:
 { "type": "connected", "userId": "..." }
 { "type": "user_message", "id": "<uuid>" }
 { "type": "assistant_start", "id": "<uuid>" }
+{ "type": "web_search_start", "queries": ["search query"] }
 { "type": "content", "content": "Hello..." }
 { "type": "done", "id": "<uuid>" }
 ```
+
+`web_search_start` is emitted when the model triggers a Perplexity web search. The UI displays a spinning globe with the search query while the search is in progress.
 
 If WebSocket is unavailable, the frontend automatically falls back to SSE via `POST /api/chat/stream`.
 

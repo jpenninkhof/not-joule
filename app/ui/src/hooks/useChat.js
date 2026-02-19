@@ -142,15 +142,31 @@ export function useChat() {
         });
         break;
         
-      case 'content':
-        // Append content to assistant message
+      case 'web_search_start':
         setMessages((prev) => {
           const updated = [...prev];
           const lastIndex = updated.length - 1;
           if (updated[lastIndex]?.role === 'assistant') {
             updated[lastIndex] = {
               ...updated[lastIndex],
-              content: updated[lastIndex].content + data.content
+              isSearching: true,
+              searchQueries: data.queries,
+            };
+          }
+          return updated;
+        });
+        break;
+
+      case 'content':
+        // Append content and clear any searching indicator
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastIndex = updated.length - 1;
+          if (updated[lastIndex]?.role === 'assistant') {
+            updated[lastIndex] = {
+              ...updated[lastIndex],
+              content: updated[lastIndex].content + data.content,
+              isSearching: false,
             };
           }
           return updated;
@@ -197,7 +213,7 @@ export function useChat() {
         break;
         
       default:
-        console.log('Unknown WebSocket message type:', data.type);
+        console.warn('Unhandled WebSocket message type:', data.type);
     }
   }, []);
 
@@ -350,6 +366,7 @@ export function useChat() {
               updated[lastIndex] = {
                 ...updated[lastIndex],
                 content: updated[lastIndex].content + chunk,
+                isSearching: false,
               };
             }
             return updated;
@@ -389,6 +406,23 @@ export function useChat() {
             return updated;
           });
           setIsStreaming(false);
+        },
+        // On event (e.g. web_search_start)
+        (event) => {
+          if (event.type === 'web_search_start') {
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIndex = updated.length - 1;
+              if (updated[lastIndex]?.role === 'assistant') {
+                updated[lastIndex] = {
+                  ...updated[lastIndex],
+                  isSearching: true,
+                  searchQueries: event.queries,
+                };
+              }
+              return updated;
+            });
+          }
         }
       );
     }
