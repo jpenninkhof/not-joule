@@ -107,11 +107,12 @@ export async function sendMessage(conversationId, content) {
  * Stream a message response
  * @param {string} conversationId - The conversation ID
  * @param {string} message - The user message
+ * @param {Array} attachments - File attachments to include
  * @param {function} onChunk - Callback for each chunk received
  * @param {function} onComplete - Callback when streaming is complete
  * @param {function} onError - Callback for errors
  */
-export function streamMessage(conversationId, message, onChunk, onComplete, onError) {
+export function streamMessage(conversationId, message, attachments, onChunk, onComplete, onError) {
   const controller = new AbortController();
 
   getCsrfToken(`${API_BASE}/chat/stream`)
@@ -121,7 +122,7 @@ export function streamMessage(conversationId, message, onChunk, onComplete, onEr
         'Content-Type': 'application/json',
         ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
       },
-      body: JSON.stringify({ conversationId, content: message }),
+      body: JSON.stringify({ conversationId, content: message, attachments: attachments || [] }),
       signal: controller.signal,
     }))
     .then(async (response) => {

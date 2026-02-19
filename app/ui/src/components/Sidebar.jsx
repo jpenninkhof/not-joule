@@ -166,7 +166,7 @@ export function Sidebar({
             </div>
             <div className="p-4">
               <p className="text-dark-300 mb-4">
-                This application is powered by SAP AI Core, a service in SAP Business Technology Platform 
+                This application is powered and built by SAP AI Core, a service in SAP Business Technology Platform 
                 designed to handle the execution and operations of AI assets.
               </p>
               <a

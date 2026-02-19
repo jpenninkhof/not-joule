@@ -12,6 +12,8 @@ export function useChat() {
   const [error, setError] = useState(null);
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
+  // Increments only on successful stream completion — used to trigger sidebar refresh
+  const [streamCompletedAt, setStreamCompletedAt] = useState(null);
   const wsRef = useRef(null);
   const abortRef = useRef(null);
   const pendingMessageRef = useRef(null);
@@ -155,6 +157,7 @@ export function useChat() {
           return updated;
         });
         setIsStreaming(false);
+        setStreamCompletedAt(Date.now());
         break;
         
       case 'error':
@@ -256,10 +259,10 @@ export function useChat() {
   /**
    * Send a message via WebSocket (with SSE fallback)
    */
-  const sendMessage = useCallback(async (content, attachments = []) => {
+  const sendMessage = useCallback(async (content, attachments = [], overrideConversationId = null) => {
     if ((!content.trim() && attachments.length === 0) || isStreaming) return;
 
-    let conversationId = currentConversationId;
+    let conversationId = overrideConversationId || currentConversationId;
 
     // Create new conversation if needed
     if (!conversationId) {
@@ -323,6 +326,7 @@ export function useChat() {
       abortRef.current = streamMessage(
         conversationId,
         content.trim(),
+        attachmentData,
         // On chunk
         (chunk) => {
           setMessages((prev) => {
@@ -352,6 +356,7 @@ export function useChat() {
             return updated;
           });
           setIsStreaming(false);
+          setStreamCompletedAt(Date.now());
         },
         // On error
         (err) => {
@@ -414,6 +419,7 @@ export function useChat() {
     error,
     currentConversationId,
     wsConnected,
+    streamCompletedAt,
     sendMessage,
     loadConversation,
     startNewConversation,

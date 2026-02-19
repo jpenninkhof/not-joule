@@ -23,6 +23,7 @@ function App() {
     isStreaming,
     error,
     currentConversationId,
+    streamCompletedAt,
     sendMessage,
     loadConversation,
     startNewConversation,
@@ -43,12 +44,12 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Refresh conversations list after sending a message
+  // Refresh conversations list only after a successful stream completion
   useEffect(() => {
-    if (!isStreaming && messages.length > 0) {
+    if (streamCompletedAt) {
       loadConversationsList();
     }
-  }, [isStreaming]);
+  }, [streamCompletedAt]);
 
   const loadConversationsList = async () => {
     try {
@@ -135,9 +136,8 @@ function App() {
       await loadConversationsList();
       if (conv && conv.ID) {
         await loadConversation(conv.ID);
-        // sendMessage is safe to call immediately - loadConversation awaits
-        // and sets currentConversationId before resolving
-        sendMessage(text);
+        // Pass conv.ID directly to avoid stale currentConversationId closure
+        sendMessage(text, [], conv.ID);
       }
     } catch (err) {
       console.error('Failed to start conversation with example:', err);

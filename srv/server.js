@@ -21,6 +21,90 @@ function isValidUUID(value) {
 const MAX_ATTACHMENTS = Number(process.env.MAX_ATTACHMENTS || 5);
 const MAX_ATTACHMENT_SIZE_BYTES = Number(process.env.MAX_ATTACHMENT_SIZE_BYTES || 5 * 1024 * 1024);
 const MAX_TOTAL_ATTACHMENT_SIZE_BYTES = Number(process.env.MAX_TOTAL_ATTACHMENT_SIZE_BYTES || 20 * 1024 * 1024);
+const MAX_CONTENT_LENGTH = Number(process.env.MAX_CONTENT_LENGTH || 32 * 1024); // 32KB default
+
+// ============ CORS Configuration ============
+const CORS_ALLOWED_ORIGINS = new Set(
+    (process.env.CORS_ALLOWED_ORIGINS || '')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean)
+);
+
+// Auto-configure CORS from VCAP_APPLICATION (Cloud Foundry)
+if (process.env.VCAP_APPLICATION) {
+    try {
+        const vcapApp = JSON.parse(process.env.VCAP_APPLICATION);
+        if (vcapApp.uris && Array.isArray(vcapApp.uris)) {
+            vcapApp.uris.forEach(uri => {
+                CORS_ALLOWED_ORIGINS.add(`https://${uri}`);
+            });
+            console.log('Auto-configured CORS origins from VCAP_APPLICATION:', vcapApp.uris.map(u => `https://${u}`).join(', '));
+        }
+    } catch (e) {
+        console.warn('Failed to parse VCAP_APPLICATION for CORS:', e.message);
+    }
+}
+
+// ============ Rate Limiting ============
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60000); // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 30); // 30 requests per minute
+const rateLimitStore = new Map();
+
+/**
+ * Check if a user has exceeded the rate limit.
+ * @param {string} userId - The user ID
+ * @returns {boolean} True if rate limit exceeded
+ */
+function isRateLimited(userId) {
+    const now = Date.now();
+    const userRequests = rateLimitStore.get(userId) || [];
+    
+    // Filter to only requests within the window
+    const recentRequests = userRequests.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+    
+    if (recentRequests.length >= RATE_LIMIT_MAX_REQUESTS) {
+        return true;
+    }
+    
+    // Add current request and update store
+    recentRequests.push(now);
+    rateLimitStore.set(userId, recentRequests);
+    
+    return false;
+}
+
+// Clean up old rate limit entries periodically.
+// unref() prevents this interval from keeping the Node.js process alive on shutdown.
+setInterval(() => {
+    const now = Date.now();
+    for (const [userId, requests] of rateLimitStore.entries()) {
+        const recent = requests.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+        if (recent.length === 0) {
+            rateLimitStore.delete(userId);
+        } else {
+            rateLimitStore.set(userId, recent);
+        }
+    }
+}, RATE_LIMIT_WINDOW_MS).unref();
+
+// ============ Error Sanitization ============
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+/**
+ * Sanitize error message for client response.
+ * In production, hide internal details.
+ * @param {Error|string} error - The error
+ * @param {string} fallbackMessage - Message to show in production
+ * @returns {string} Sanitized error message
+ */
+function sanitizeErrorMessage(error, fallbackMessage = 'An error occurred') {
+    if (!IS_PRODUCTION) {
+        return error instanceof Error ? error.message : String(error);
+    }
+    // In production, only show generic messages
+    return fallbackMessage;
+}
 
 // ============ Auth Helpers ============
 
@@ -69,7 +153,11 @@ function decodeUserFromToken(token) {
 
 function extractBase64Data(data) {
     if (typeof data !== 'string') return '';
-    if (data.startsWith('data:') && data.includes(',')) return data.split(',')[1];
+    if (data.startsWith('data:')) {
+        // Use regex to correctly handle data URLs (data.split(',')[1] breaks on embedded commas)
+        const match = data.match(/^data:[^;]+;base64,(.+)$/s);
+        return match ? match[1] : '';
+    }
     return data;
 }
 
@@ -148,7 +236,8 @@ async function getUserFromRequest(req) {
         return userFromPayload(securityContext.token?.payload || {});
     }
 
-    if (process.env.NODE_ENV === 'production') {
+    const fallbackAllowed = process.env.NODE_ENV === 'development';
+    if (!fallbackAllowed) {
         return null;
     }
 
@@ -309,6 +398,47 @@ function parseStreamChunk(buffer, isAnthropic) {
     return { deltas, remaining };
 }
 
+function closeAiStream(stream) {
+    if (!stream) return;
+    if (typeof stream.destroy === 'function') {
+        stream.destroy();
+        return;
+    }
+    if (typeof stream.abort === 'function') {
+        stream.abort();
+        return;
+    }
+    if (typeof stream.close === 'function') {
+        stream.close();
+    }
+}
+
+function sendWs(ws, payload) {
+    if (!WebSocket || !ws || ws.readyState !== WebSocket.OPEN) {
+        return false;
+    }
+    try {
+        ws.send(JSON.stringify(payload));
+        return true;
+    } catch (error) {
+        console.error('WebSocket send error:', error);
+        return false;
+    }
+}
+
+function sendSse(res, payload) {
+    if (!res || res.writableEnded || res.destroyed) {
+        return false;
+    }
+    try {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        return true;
+    } catch (error) {
+        console.error('SSE send error:', error);
+        return false;
+    }
+}
+
 /**
  * Process post-stream tasks: save assistant message, update title, extract memories.
  */
@@ -359,17 +489,26 @@ cds.on('bootstrap', (app) => {
     const express = require('express');
     app.use(express.json({ limit: '50mb' }));
 
-    // CORS: restrict in production, allow all in development
+    // CORS: allow all in development; enforce allowlist in production.
     app.use((req, res, next) => {
-        const origin = process.env.NODE_ENV === 'production'
-            ? req.headers.origin || ''
-            : '*';
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        if (process.env.NODE_ENV === 'production') {
+        const origin = req.headers.origin || '';
+        const isProd = process.env.NODE_ENV === 'production';
+
+        if (!isProd) {
+            res.header('Access-Control-Allow-Origin', '*');
+        } else if (origin) {
+            if (!CORS_ALLOWED_ORIGINS.has(origin)) {
+                if (req.method === 'OPTIONS') {
+                    return res.sendStatus(403);
+                }
+                return res.status(403).json({ error: 'Origin not allowed' });
+            }
+            res.header('Access-Control-Allow-Origin', origin);
             res.header('Vary', 'Origin');
         }
+
+        res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         if (req.method === 'OPTIONS') {
             return res.sendStatus(200);
         }
@@ -387,6 +526,12 @@ cds.on('served', async () => {
         try {
             const { conversationId, content, attachments } = req.body;
             const userId = req.user.id;
+
+            // Rate limiting check
+            if (isRateLimited(userId)) {
+                return res.status(429).json({ error: 'Too many requests. Please wait a moment.' });
+            }
+
             let normalizedAttachments = [];
 
             try {
@@ -400,6 +545,9 @@ cds.on('served', async () => {
             }
             if (!isValidUUID(conversationId)) {
                 return res.status(400).json({ error: 'Invalid conversationId format' });
+            }
+            if (content && content.length > MAX_CONTENT_LENGTH) {
+                return res.status(400).json({ error: `Message too long (max ${MAX_CONTENT_LENGTH} characters)` });
             }
 
             const db = await cds.connect.to('db');
@@ -436,31 +584,64 @@ cds.on('served', async () => {
             res.setHeader('X-Accel-Buffering', 'no');
             res.flushHeaders();
 
-            res.write(`data: ${JSON.stringify({ type: 'user_message', id: userMessage.ID })}\n\n`);
+            if (!sendSse(res, { type: 'user_message', id: userMessage.ID })) {
+                if (!res.writableEnded) {
+                    res.end();
+                }
+                return;
+            }
 
             const assistantMessageId = uuidv4();
-            res.write(`data: ${JSON.stringify({ type: 'assistant_start', id: assistantMessageId })}\n\n`);
+            if (!sendSse(res, { type: 'assistant_start', id: assistantMessageId })) {
+                if (!res.writableEnded) {
+                    res.end();
+                }
+                return;
+            }
 
             const client = getSharedAiCoreClient();
             let fullContent = '';
             const isAnthropic = client.modelType === 'anthropic';
+            let stream;
+            let isClosed = false;
+            let detachCloseListeners = () => {};
 
             try {
-                const stream = await client.chatStream(aiMessages);
+                stream = await client.chatStream(aiMessages);
                 let buffer = '';
+                const cancelUpstream = () => {
+                    if (isClosed) return;
+                    isClosed = true;
+                    detachCloseListeners();
+                    closeAiStream(stream);
+                };
+                const onReqAborted = () => cancelUpstream();
+                const onResClose = () => cancelUpstream();
+                detachCloseListeners = () => {
+                    req.off('aborted', onReqAborted);
+                    res.off('close', onResClose);
+                };
+                req.on('aborted', onReqAborted);
+                res.on('close', onResClose);
 
                 stream.on('data', (chunk) => {
+                    if (isClosed) return;
                     buffer += chunk.toString();
                     const { deltas, remaining } = parseStreamChunk(buffer, isAnthropic);
                     buffer = remaining;
 
                     for (const delta of deltas) {
                         fullContent += delta;
-                        res.write(`data: ${JSON.stringify({ type: 'content', content: delta })}\n\n`);
+                        if (!sendSse(res, { type: 'content', content: delta })) {
+                            cancelUpstream();
+                            return;
+                        }
                     }
                 });
 
                 stream.on('end', async () => {
+                    if (isClosed) return;
+                    detachCloseListeners();
                     try {
                         await processStreamEnd(db, {
                             assistantMessageId, conversationId, conversation,
@@ -469,29 +650,40 @@ cds.on('served', async () => {
                     } catch (endError) {
                         console.error('Error in stream end processing:', endError);
                     }
-                    res.write(`data: ${JSON.stringify({ type: 'done', id: assistantMessageId })}\n\n`);
-                    res.end();
+                    sendSse(res, { type: 'done', id: assistantMessageId });
+                    if (!res.writableEnded) {
+                        res.end();
+                    }
                 });
 
                 stream.on('error', (error) => {
+                    if (isClosed) return;
+                    detachCloseListeners();
                     console.error('Stream error:', error);
-                    res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
-                    res.end();
+                    sendSse(res, { type: 'error', message: sanitizeErrorMessage(error, 'Stream error occurred') });
+                    if (!res.writableEnded) {
+                        res.end();
+                    }
                 });
 
             } catch (error) {
+                detachCloseListeners();
                 console.error('AI Core error:', error);
-                res.write(`data: ${JSON.stringify({ type: 'error', message: 'Failed to get AI response' })}\n\n`);
-                res.end();
+                sendSse(res, { type: 'error', message: sanitizeErrorMessage(error, 'Failed to get AI response') });
+                if (!res.writableEnded) {
+                    res.end();
+                }
             }
 
         } catch (error) {
             console.error('Streaming endpoint error:', error);
             if (!res.headersSent) {
-                res.status(500).json({ error: 'Internal server error' });
+                res.status(500).json({ error: sanitizeErrorMessage(error, 'Internal server error') });
             } else {
-                res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
-                res.end();
+                sendSse(res, { type: 'error', message: sanitizeErrorMessage(error, 'An error occurred') });
+                if (!res.writableEnded) {
+                    res.end();
+                }
             }
         }
     });
@@ -691,6 +883,9 @@ cds.on('served', async () => {
 
     app.delete('/api/memories/:id', authMiddleware, async (req, res) => {
         try {
+            if (!isValidUUID(req.params.id)) {
+                return res.status(400).json({ error: 'Invalid memory ID format' });
+            }
             const success = await memoryService.deleteMemory(req.params.id, req.user.id);
             if (success) {
                 res.json({ success: true });
@@ -714,7 +909,7 @@ cds.on('served', async () => {
     });
 
     // --- Model info ---
-    app.get('/api/model', async (req, res) => {
+    app.get('/api/model', authMiddleware, async (req, res) => {
         try {
             const client = getSharedAiCoreClient();
             let modelName = process.env.AICORE_MODEL_NAME || 'Unknown Model';
@@ -739,18 +934,17 @@ cds.on('served', async () => {
         }
     });
 
-    // ============ WebSocket Setup ============
+});
 
-    if (WebSocket) {
-        setTimeout(() => {
-            try {
-                if (cds.app && cds.app.server) {
-                    setupWebSocket(cds.app.server);
-                }
-            } catch (e) {
-                console.error('Failed to set up WebSocket server:', e.message);
-            }
-        }, 1000);
+// ============ WebSocket Setup ============
+// Must be registered at the top level using cds.on('listening', ...) so the
+// HTTP server instance is available. cds.app.server is NOT set during 'served'.
+cds.on('listening', ({ server }) => {
+    if (!WebSocket) return;
+    try {
+        setupWebSocket(server);
+    } catch (e) {
+        console.error('Failed to set up WebSocket server:', e.message);
     }
 });
 
@@ -766,6 +960,16 @@ function setupWebSocket(httpServer) {
     });
 
     wss.on('connection', async (ws, req) => {
+        const origin = req.headers?.origin || '';
+        const isProd = process.env.NODE_ENV === 'production';
+        if (isProd) {
+            if (!origin || !CORS_ALLOWED_ORIGINS.has(origin)) {
+                sendWs(ws, { type: 'error', message: 'Origin not allowed' });
+                ws.close(1008, 'Origin not allowed');
+                return;
+            }
+        }
+
         let user = null;
         try {
             user = await getUserFromRequest(req);
@@ -776,7 +980,7 @@ function setupWebSocket(httpServer) {
         }
 
         if (!user) {
-            ws.send(JSON.stringify({ type: 'error', message: 'No authentication token provided' }));
+            sendWs(ws, { type: 'error', message: 'No authentication token provided' });
             ws.close(1008, 'Unauthorized');
             return;
         }
@@ -788,11 +992,11 @@ function setupWebSocket(httpServer) {
                 if (data.type === 'chat') {
                     await handleChatMessage(ws, user, data);
                 } else if (data.type === 'ping') {
-                    ws.send(JSON.stringify({ type: 'pong' }));
+                    sendWs(ws, { type: 'pong' });
                 }
             } catch (e) {
                 console.error('WebSocket message error:', e);
-                ws.send(JSON.stringify({ type: 'error', message: e.message }));
+                sendWs(ws, { type: 'error', message: e.message });
             }
         });
 
@@ -801,7 +1005,7 @@ function setupWebSocket(httpServer) {
             console.error('WebSocket error:', error);
         });
 
-        ws.send(JSON.stringify({ type: 'connected', userId: user.id }));
+        sendWs(ws, { type: 'connected', userId: user.id });
     });
 }
 
@@ -810,17 +1014,28 @@ function setupWebSocket(httpServer) {
  */
 async function handleChatMessage(ws, user, data) {
     const { conversationId, content, attachments } = data;
+
+    // Rate limiting check
+    if (isRateLimited(user.id)) {
+        sendWs(ws, { type: 'error', message: 'Too many requests. Please wait a moment.' });
+        return;
+    }
+
     let normalizedAttachments = [];
 
     try {
         normalizedAttachments = validateAndNormalizeAttachments(attachments);
     } catch (validationError) {
-        ws.send(JSON.stringify({ type: 'error', message: validationError.message }));
+        sendWs(ws, { type: 'error', message: validationError.message });
         return;
     }
 
     if (!conversationId || (!content && normalizedAttachments.length === 0)) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Missing conversationId or content' }));
+        sendWs(ws, { type: 'error', message: 'Missing conversationId or content' });
+        return;
+    }
+    if (!isValidUUID(conversationId)) {
+        sendWs(ws, { type: 'error', message: 'Invalid conversationId format' });
         return;
     }
 
@@ -830,7 +1045,7 @@ async function handleChatMessage(ws, user, data) {
         SELECT.one.from('ai.chat.Conversations').where({ ID: conversationId, userId: user.id })
     );
     if (!conversation) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Conversation not found or access denied' }));
+        sendWs(ws, { type: 'error', message: 'Conversation not found or access denied' });
         return;
     }
 
@@ -849,33 +1064,61 @@ async function handleChatMessage(ws, user, data) {
         await saveAttachments(db, normalizedAttachments, userMessage.ID);
     }
 
-    ws.send(JSON.stringify({ type: 'user_message', id: userMessage.ID }));
+    if (!sendWs(ws, { type: 'user_message', id: userMessage.ID })) {
+        return;
+    }
 
     const aiMessages = await buildAiMessages(db, user.id, conversationId, content, normalizedAttachments);
 
     const assistantMessageId = uuidv4();
-    ws.send(JSON.stringify({ type: 'assistant_start', id: assistantMessageId }));
+    if (!sendWs(ws, { type: 'assistant_start', id: assistantMessageId })) {
+        return;
+    }
 
     const client = getSharedAiCoreClient();
     let fullContent = '';
     const isAnthropic = client.modelType === 'anthropic';
+    let stream;
+    let isClosed = false;
+    let detachWsLifecycleListeners = () => {};
 
     try {
-        const stream = await client.chatStream(aiMessages);
+        stream = await client.chatStream(aiMessages);
         let buffer = '';
+        const cancelUpstream = () => {
+            if (isClosed) return;
+            isClosed = true;
+            detachWsLifecycleListeners();
+            closeAiStream(stream);
+        };
+        const onWsClose = () => cancelUpstream();
+        const onWsError = () => cancelUpstream();
+        detachWsLifecycleListeners = () => {
+            ws.off('close', onWsClose);
+            ws.off('error', onWsError);
+        };
+
+        ws.on('close', onWsClose);
+        ws.on('error', onWsError);
 
         stream.on('data', (chunk) => {
+            if (isClosed) return;
             buffer += chunk.toString();
             const { deltas, remaining } = parseStreamChunk(buffer, isAnthropic);
             buffer = remaining;
 
             for (const delta of deltas) {
                 fullContent += delta;
-                ws.send(JSON.stringify({ type: 'content', content: delta }));
+                if (!sendWs(ws, { type: 'content', content: delta })) {
+                    cancelUpstream();
+                    return;
+                }
             }
         });
 
         stream.on('end', async () => {
+            if (isClosed) return;
+            detachWsLifecycleListeners();
             try {
                 await processStreamEnd(db, {
                     assistantMessageId, conversationId, conversation,
@@ -884,17 +1127,20 @@ async function handleChatMessage(ws, user, data) {
             } catch (endError) {
                 console.error('Error in stream end processing:', endError);
             }
-            ws.send(JSON.stringify({ type: 'done', id: assistantMessageId }));
+            sendWs(ws, { type: 'done', id: assistantMessageId });
         });
 
         stream.on('error', (error) => {
+            if (isClosed) return;
+            detachWsLifecycleListeners();
             console.error('Stream error:', error);
-            ws.send(JSON.stringify({ type: 'error', message: error.message }));
+            sendWs(ws, { type: 'error', message: sanitizeErrorMessage(error, 'Stream error occurred') });
         });
 
     } catch (error) {
+        detachWsLifecycleListeners();
         console.error('AI Core error:', error);
-        ws.send(JSON.stringify({ type: 'error', message: 'Failed to get AI response' }));
+        sendWs(ws, { type: 'error', message: sanitizeErrorMessage(error, 'Failed to get AI response') });
     }
 }
 

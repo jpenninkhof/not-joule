@@ -42,6 +42,6 @@ entity MessageAttachments : cuid, managed {
 entity UserMemories : cuid, managed {
     userId                : String(255) not null;  // User ID from XSUAA
     content               : LargeString not null;  // The raw memory text
-    embedding             : Vector(1536);          // Vector embedding (1536 dimensions for text-embedding-ada-002)
+    embedding             : Vector(1024);          // Vector embedding (1024 dimensions for Amazon Titan)
     sourceConversationId  : String(36);            // UUID of the conversation this memory came from
 }

@@ -27,13 +27,18 @@ function extractReadKey(req, keyName = 'ID') {
  * Chat Service Implementation
  * Handles chat operations and integrates with SAP AI Core
  */
+const DEFAULT_CONVERSATION_LIMIT = 50;
+
 module.exports = class ChatService extends cds.ApplicationService {
-    
+
     async init() {
+        // Acquire db connection once; CDS caches it internally
+        this.db = await cds.connect.to('db');
+
         // Filter conversations by current user - use on() handler to query db directly
         this.on('READ', 'Conversations', async (req) => {
             const userId = req.user.id;
-            const db = await cds.connect.to('db');
+            const db = this.db;
             
             // Check if this is a single entity request (has keys)
             const keys = req.query.SELECT?.from?.ref?.[0]?.where;
@@ -100,15 +105,17 @@ module.exports = class ChatService extends cds.ApplicationService {
             }
             
             // Query the database table directly with user filter (list query)
+            const top = req.query.SELECT?.limit?.rows?.val || DEFAULT_CONVERSATION_LIMIT;
             let query = SELECT.from('ai.chat.Conversations')
                 .where({ userId: userId })
-                .columns('ID', 'title', 'createdAt', 'createdBy', 'modifiedAt', 'modifiedBy');
-            
+                .columns('ID', 'title', 'createdAt', 'createdBy', 'modifiedAt', 'modifiedBy')
+                .limit(top);
+
             // Apply $orderby if present
             if (req.query.SELECT?.orderBy) {
                 query = query.orderBy(req.query.SELECT.orderBy);
             }
-            
+
             const results = await db.run(query);
             return results;
         });
@@ -117,7 +124,7 @@ module.exports = class ChatService extends cds.ApplicationService {
         this.on('createConversation', async (req) => {
             const { title } = req.data;
             const userId = req.user.id;
-            
+
             const conversation = {
                 ID: uuidv4(),
                 title: title || 'New Conversation',
@@ -125,8 +132,8 @@ module.exports = class ChatService extends cds.ApplicationService {
                 createdAt: new Date().toISOString(),
                 modifiedAt: new Date().toISOString()
             };
-            
-            const db = await cds.connect.to('db');
+
+            const db = this.db;
             await db.run(INSERT.into('ai.chat.Conversations').entries(conversation));
             
             return { ID: conversation.ID, title: conversation.title, createdAt: conversation.createdAt };
@@ -136,8 +143,8 @@ module.exports = class ChatService extends cds.ApplicationService {
         this.on('deleteConversation', async (req) => {
             const { conversationId } = req.data;
             const userId = req.user.id;
-            
-            const db = await cds.connect.to('db');
+
+            const db = this.db;
             
             // Verify ownership
             const conversation = await db.run(
@@ -172,8 +179,8 @@ module.exports = class ChatService extends cds.ApplicationService {
         this.on('sendMessage', async (req) => {
             const { conversationId, content } = req.data;
             const userId = req.user.id;
-            
-            const db = await cds.connect.to('db');
+
+            const db = this.db;
             
             // Verify ownership
             const conversation = await db.run(
@@ -236,23 +243,20 @@ module.exports = class ChatService extends cds.ApplicationService {
      */
     async getAIResponse(conversationId, userMessage, db) {
         try {
-            // Get conversation history for context
+            // Get conversation history (includes the already-saved user message)
             const messages = await db.run(
                 SELECT.from('ai.chat.Messages')
                     .where({ conversation_ID: conversationId })
                     .orderBy('createdAt asc')
                     .limit(20) // Limit context window
             );
-            
-            // Build messages array for AI
+
+            // Build messages array for AI — user message is already present from DB
             const aiMessages = messages.map(msg => ({
                 role: msg.role,
                 content: msg.content
             }));
-            
-            // Add current user message
-            aiMessages.push({ role: 'user', content: userMessage });
-            
+
             // Call AI Core
             const response = await this.callAICore(aiMessages);
             return response;

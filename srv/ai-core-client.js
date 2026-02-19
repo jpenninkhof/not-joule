@@ -8,7 +8,10 @@ const https = require('https');
  */
 class AiCoreClient {
     constructor() {
-        this.deploymentId = process.env.AICORE_DEPLOYMENT_ID || 'd76331514e34ae4c';
+        this.deploymentId = process.env.AICORE_DEPLOYMENT_ID;
+        if (!this.deploymentId) {
+            throw new Error('AICORE_DEPLOYMENT_ID environment variable is required');
+        }
         this.resourceGroup = process.env.AICORE_RESOURCE_GROUP || 'default';
         // Model type: 'anthropic' or 'openai' - detect from deployment or set explicitly
         this.modelType = process.env.AICORE_MODEL_TYPE || 'anthropic';
@@ -19,6 +22,8 @@ class AiCoreClient {
         // Token cache: avoid fetching a new token on every request
         this._cachedToken = null;
         this._tokenExpiresAt = 0;
+        // Deduplicates concurrent token fetches - all callers share one in-flight request
+        this._pendingTokenFetch = null;
     }
     
     /**
@@ -78,12 +83,18 @@ class AiCoreClient {
     }
     
     /**
-     * Get OAuth token from XSUAA (cached until 60s before expiry)
+     * Get OAuth token from XSUAA (cached until 60s before expiry).
+     * Concurrent callers share a single in-flight fetch to avoid duplicate requests.
      */
     async getToken() {
         // Return cached token if still valid (with 60s safety margin)
         if (this._cachedToken && Date.now() < this._tokenExpiresAt - 60000) {
             return this._cachedToken;
+        }
+
+        // Deduplicate concurrent token fetches
+        if (this._pendingTokenFetch) {
+            return this._pendingTokenFetch;
         }
 
         if (!this.credentials) {
@@ -93,7 +104,7 @@ class AiCoreClient {
         const tokenUrl = new URL('/oauth/token', this.credentials.url);
         const auth = Buffer.from(`${this.credentials.clientid}:${this.credentials.clientsecret}`).toString('base64');
 
-        const token = await new Promise((resolve, reject) => {
+        this._pendingTokenFetch = new Promise((resolve, reject) => {
             const postData = 'grant_type=client_credentials';
 
             const options = {
@@ -132,9 +143,11 @@ class AiCoreClient {
             req.on('error', reject);
             req.write(postData);
             req.end();
+        }).finally(() => {
+            this._pendingTokenFetch = null;
         });
 
-        return token;
+        return this._pendingTokenFetch;
     }
     
     /**

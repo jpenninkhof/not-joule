@@ -167,6 +167,24 @@ To change these settings, update the environment variables:
 - **UI Theme**: Edit `app/webapp/tailwind.config.js` and `app/webapp/src/index.css`
 - **AI Parameters**: Modify `srv/ai-core-client.js` to adjust temperature, max tokens, etc.
 
+### Security & Limits
+
+Set these environment variables for safer production behavior:
+
+- `CORS_ALLOWED_ORIGINS`: Comma-separated allowlist of origins (for example `https://app.example.com,https://admin.example.com`). Required in production for browser access.
+- `MAX_ATTACHMENTS`: Max attachments per request (default `5`).
+- `MAX_ATTACHMENT_SIZE_BYTES`: Max size per attachment in bytes (default `5242880`, 5 MB).
+- `MAX_TOTAL_ATTACHMENT_SIZE_BYTES`: Max total attachment payload per request in bytes (default `20971520`, 20 MB).
+
+Example:
+
+```bash
+export CORS_ALLOWED_ORIGINS="https://app.example.com"
+export MAX_ATTACHMENTS=5
+export MAX_ATTACHMENT_SIZE_BYTES=5242880
+export MAX_TOTAL_ATTACHMENT_SIZE_BYTES=20971520
+```
+
 ## API Endpoints
 
 ### OData Service (ChatService)

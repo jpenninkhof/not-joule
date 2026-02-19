@@ -16,8 +16,7 @@ RULES:
 5. Write memories in third person (e.g., "Jan works at SAP" not "You work at SAP")
 6. Be concise but specific
 
-CONVERSATION:
-{{conversation}}
+The conversation to analyze will be provided as the next user message.
 
 Respond with a JSON object containing an array of memories. If nothing is worth remembering, return an empty array.
 

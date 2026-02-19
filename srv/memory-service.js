@@ -17,8 +17,8 @@ class MemoryService {
     }
 
     /**
-     * Load the memory extraction prompt from file
-     * @returns {string} The extraction prompt template
+     * Load the memory extraction system prompt from file
+     * @returns {string} The extraction system prompt
      */
     getExtractionPrompt() {
         if (!this.extractionPrompt) {
@@ -27,11 +27,8 @@ class MemoryService {
                 this.extractionPrompt = fs.readFileSync(promptPath, 'utf8');
             } catch (error) {
                 console.error('Failed to load extraction prompt:', error);
-                // Fallback prompt
-                this.extractionPrompt = `Extract 0-3 important personal facts from this conversation. Return JSON: {"memories": ["fact1", "fact2"]}
-
-CONVERSATION:
-{{conversation}}
+                // Fallback system prompt - conversation passed separately as user message
+                this.extractionPrompt = `Extract 0-3 important personal facts from the conversation I provide. Return JSON: {"memories": ["fact1", "fact2"]}
 
 Your response (JSON only):`;
             }
@@ -48,19 +45,17 @@ Your response (JSON only):`;
      */
     async extractMemories(messages, userId, conversationId) {
         try {
-            // Format conversation for the prompt
+            // Format conversation as a separate user message to prevent prompt injection
             const conversationText = messages
                 .map(msg => `${msg.role.toUpperCase()}: ${msg.content}`)
                 .join('\n\n');
 
-            // Build the extraction prompt
-            const prompt = this.getExtractionPrompt().replace('{{conversation}}', conversationText);
-
-            // Call AI Core to extract memories
+            // System prompt contains only instructions; conversation is isolated as user message
             const { getSharedAiCoreClient } = require('./ai-core-client');
 
             const response = await getSharedAiCoreClient().chat([
-                { role: 'user', content: prompt }
+                { role: 'system', content: this.getExtractionPrompt() },
+                { role: 'user', content: conversationText }
             ], { maxTokens: 500, temperature: 0.3 });
 
             // Parse the response
@@ -205,15 +200,15 @@ Your response (JSON only):`;
      * Generate a mock embedding for development/testing
      * Uses a simple hash-based approach to create consistent embeddings
      * @param {string} text - The text to embed
-     * @returns {Array<number>} A 1536-dimensional mock embedding
+     * @returns {Array<number>} A 1024-dimensional mock embedding (matches Amazon Titan)
      */
     generateMockEmbedding(text) {
-        const embedding = new Array(1536).fill(0);
+        const embedding = new Array(1024).fill(0);
         
         // Simple hash-based embedding for consistency
         for (let i = 0; i < text.length; i++) {
             const charCode = text.charCodeAt(i);
-            const idx = (charCode * (i + 1)) % 1536;
+            const idx = (charCode * (i + 1)) % 1024;
             embedding[idx] += 0.01;
         }
 
@@ -397,16 +392,37 @@ Your response (JSON only):`;
             const hana = db.dbc;
 
             if (!hana || !hana.exec) {
-                console.log('Native HANA connection not available for vector search');
-                // Fallback: return all memories for user (limited)
-                const memories = await db.run(
+                console.log('Native HANA connection not available for vector search, using keyword fallback');
+                // Fallback: keyword-based relevance filtering
+                const keywords = query.toLowerCase().split(/\s+/)
+                    .filter(w => w.length > 3)
+                    .slice(0, 5);
+
+                const candidates = await db.run(
                     SELECT.from('ai.chat.UserMemories')
                         .where({ userId: userId })
                         .columns('content')
                         .orderBy('createdAt desc')
-                        .limit(this.maxRetrievedMemories)
+                        .limit(this.maxRetrievedMemories * 4)
                 );
-                return memories.map(m => m.content);
+
+                if (keywords.length > 0) {
+                    const scored = candidates
+                        .map(m => ({
+                            content: m.content,
+                            score: keywords.filter(kw => m.content.toLowerCase().includes(kw)).length
+                        }))
+                        .filter(m => m.score > 0)
+                        .sort((a, b) => b.score - a.score)
+                        .slice(0, this.maxRetrievedMemories);
+
+                    if (scored.length > 0) {
+                        return scored.map(m => m.content);
+                    }
+                }
+
+                // No keyword matches — return most recent as last resort
+                return candidates.slice(0, this.maxRetrievedMemories).map(m => m.content);
             }
 
             // Generate embedding for the query
