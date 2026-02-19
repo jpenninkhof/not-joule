@@ -1,4 +1,4 @@
-# AI Chat Application
+# Not Joule - AI Chat Application
 
 A modern AI chat interface built with SAP CAP (Cloud Application Programming Model) and React, integrated with SAP AI Core for generative AI capabilities.
 
