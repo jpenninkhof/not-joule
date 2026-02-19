@@ -269,4 +269,4 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" https://your-app/api/memories
 
 ## License
 
-UNLICENSED - Internal use only
+MIT
