@@ -22,7 +22,7 @@ class MemoryService {
         this.contradictionThreshold = 0.35;  // Cosine similarity in [this, 0.85) → LLM check
         this.maxMemoriesPerExtraction = 3;
         this.maxRetrievedMemories = 5;
-        this.minRetrievalScore = 0.4;        // Combined retrieval score minimum
+        this.minRetrievalScore = 0.0;        // Titan scores ~0.08; return all top-N (raise to 0.3 when switching to text-embedding-3-small)
     }
 
     // ─── Prompt loading ───────────────────────────────────────────────────────
@@ -125,12 +125,16 @@ class MemoryService {
             let url, body;
 
             if (embeddingModelType === 'openai') {
+                // SAP AI Core OpenAI-compatible models: use /embeddings (no version prefix, no dimensions param)
+                // text-embedding-3-small default output is 1536 dimensions
                 url = new URL(`/v2/inference/deployments/${deploymentId}/embeddings`, baseUrl);
-                body = JSON.stringify({ input: text, model: 'text-embedding-ada-002' });
+                body = JSON.stringify({ input: text });
             } else {
                 url = new URL(`/v2/inference/deployments/${deploymentId}/invoke`, baseUrl);
                 body = JSON.stringify({ inputText: text });
             }
+
+            console.log(`Embedding API: ${url.pathname} (${embeddingModelType})`);
 
             return new Promise((resolve, reject) => {
                 const https = require('https');
@@ -155,7 +159,7 @@ class MemoryService {
                     res.on('end', () => {
                         try {
                             if (res.statusCode >= 400) {
-                                console.error('Embedding API error:', data);
+                                console.error(`Embedding API error (HTTP ${res.statusCode}):`, data);
                                 resolve(this.generateMockEmbedding(text));
                                 return;
                             }
@@ -165,7 +169,6 @@ class MemoryService {
                                 : json.embedding;
 
                             if (embedding && Array.isArray(embedding)) {
-                                console.log(`Generated embedding with ${embedding.length} dimensions`);
                                 resolve(embedding);
                             } else {
                                 console.error('Invalid embedding response format:', JSON.stringify(json).substring(0, 200));
@@ -302,27 +305,26 @@ class MemoryService {
     }
 
     async _findSimilarMemory(userId, embedding, db) {
-        const hana = db.dbc;
-        if (!hana || !hana.exec) return null;
-
         const embeddingStr = `[${embedding.join(',')}]`;
-        const result = await new Promise((resolve, reject) => {
-            hana.exec(
-                `SELECT TOP 1 "ID", "CONTENT", COSINE_SIMILARITY("EMBEDDING", TO_REAL_VECTOR(?)) AS similarity
+        try {
+            const result = await db.run(
+                `SELECT TOP 1 "ID", "CONTENT", COSINE_SIMILARITY("EMBEDDING", TO_REAL_VECTOR('${embeddingStr}')) AS similarity
                  FROM "AI_CHAT_USERMEMORIES"
-                 WHERE "USERID" = ?
+                 WHERE "USERID" = ? AND "EMBEDDING" IS NOT NULL
                  ORDER BY similarity DESC`,
-                [embeddingStr, userId],
-                (err, rows) => { if (err) reject(err); else resolve(rows); }
+                [userId]
             );
-        });
-
-        if (result && result.length > 0) {
-            return {
-                id: result[0].ID,
-                content: result[0].CONTENT,
-                similarity: result[0].SIMILARITY
-            };
+            if (result && result.length > 0) {
+                const row = result[0];
+                const rawContent = row.CONTENT ?? row.content ?? '';
+                return {
+                    id: row.ID ?? row.id,
+                    content: typeof rawContent === 'string' ? rawContent : rawContent.toString(),
+                    similarity: row.SIMILARITY ?? row.similarity
+                };
+            }
+        } catch (e) {
+            console.error('_findSimilarMemory error:', e.message);
         }
         return null;
     }
@@ -368,76 +370,35 @@ Respond with JSON only: {"action": "duplicate"|"update"|"new", "updatedContent":
     }
 
     async _updateExistingMemory(db, id, content, embedding, category, confidence) {
-        const hana = db.dbc;
-        if (!hana || !hana.exec) return;
-
         const embeddingStr = `[${embedding.join(',')}]`;
         const now = new Date().toISOString();
 
         // Build SET clause dynamically — only overwrite category/confidence if provided
-        const setClauses = [`"CONTENT" = ?`, `"EMBEDDING" = TO_REAL_VECTOR(?)`, `"MODIFIEDAT" = ?`];
-        const params = [content, embeddingStr, now];
+        const setClauses = [`"CONTENT" = ?`, `"EMBEDDING" = TO_REAL_VECTOR('${embeddingStr}')`, `"MODIFIEDAT" = ?`];
+        const params = [content, now];
         if (category != null)    { setClauses.push(`"CATEGORY" = ?`);    params.push(category); }
         if (confidence != null)  { setClauses.push(`"CONFIDENCE" = ?`);  params.push(confidence); }
         params.push(id);
 
-        await new Promise((resolve, reject) => {
-            hana.exec(
-                `UPDATE "AI_CHAT_USERMEMORIES" SET ${setClauses.join(', ')} WHERE "ID" = ?`,
-                params,
-                (err) => { if (err) reject(err); else resolve(); }
-            );
-        });
+        await db.run(
+            `UPDATE "AI_CHAT_USERMEMORIES" SET ${setClauses.join(', ')} WHERE "ID" = ?`,
+            params
+        );
         console.log('Updated memory (contradiction resolved):', content.substring(0, 50));
     }
 
     async _insertMemory(db, userId, content, embedding, conversationId, category, confidence = 1.0) {
-        const hana = db.dbc;
         const id = uuidv4();
         const now = new Date().toISOString();
+        const embeddingStr = `[${embedding.join(',')}]`;
 
-        if (hana && hana.exec) {
-            const embeddingStr = `[${embedding.join(',')}]`;
-            await new Promise((resolve, reject) => {
-                hana.exec(
-                    `INSERT INTO "AI_CHAT_USERMEMORIES"
-                     ("ID", "USERID", "CONTENT", "EMBEDDING", "SOURCECONVERSATIONID", "CREATEDAT", "MODIFIEDAT", "CATEGORY", "CONFIDENCE", "ACCESSCOUNT")
-                     VALUES (?, ?, ?, TO_REAL_VECTOR(?), ?, ?, ?, ?, ?, 0)`,
-                    [id, userId, content, embeddingStr, conversationId, now, now, category || null, confidence],
-                    (err) => { if (err) reject(err); else resolve(); }
-                );
-            });
-        } else {
-            // Fallback: CDS insert (no vector support)
-            await db.run(INSERT.into('ai.chat.UserMemories').entries({
-                ID: id, userId, content, sourceConversationId: conversationId,
-                createdAt: now, modifiedAt: now, category: category || null, confidence, accessCount: 0
-            }));
-        }
-        console.log('Stored memory:', content.substring(0, 50));
-    }
-
-    /**
-     * Increment accessCount and update lastAccessedAt for a set of memory IDs.
-     * Fire-and-forget — errors are logged but not propagated.
-     */
-    _updateAccessCounts(hana, ids) {
-        if (!hana || !hana.exec || ids.length === 0) return;
-        const now = new Date().toISOString();
-        const placeholders = ids.map(() => '?').join(', ');
-        hana.exec(
-            `UPDATE "AI_CHAT_USERMEMORIES"
-             SET "ACCESSCOUNT" = COALESCE("ACCESSCOUNT", 0) + 1, "LASTACCESSEDAT" = ?
-             WHERE "ID" IN (${placeholders})`,
-            [now, ...ids],
-            (err, rowsAffected) => {
-                if (err) {
-                    console.error('Failed to update access counts:', err, '| IDs:', ids);
-                } else {
-                    console.log(`Updated access counts for ${rowsAffected} memories`);
-                }
-            }
+        await db.run(
+            `INSERT INTO "AI_CHAT_USERMEMORIES"
+             ("ID", "USERID", "CONTENT", "EMBEDDING", "SOURCECONVERSATIONID", "CREATEDAT", "MODIFIEDAT", "CATEGORY", "CONFIDENCE", "ACCESSCOUNT")
+             VALUES (?, ?, ?, TO_REAL_VECTOR('${embeddingStr}'), ?, ?, ?, ?, ?, 0)`,
+            [id, userId, content, conversationId, now, now, category || null, confidence]
         );
+        console.log('Stored memory:', content.substring(0, 50));
     }
 
     // ─── Text normalisation ───────────────────────────────────────────────────
@@ -478,28 +439,21 @@ Respond with JSON only: {"action": "duplicate"|"update"|"new", "updatedContent":
         try {
             const db = await cds.connect.to('db');
 
-            // Run a CDS query first to ensure the native HANA connection (db.dbc) is initialised.
-            // Without this, db.dbc is null at request time even though it becomes available after
-            // the first query executes through the CDS adapter.
-            await db.run(SELECT.from('ai.chat.UserMemories').where({ userId }).columns('ID').limit(1));
-
-            const hana = db.dbc;
-
-            if (!hana || !hana.exec) {
-                return this._keywordFallbackRetrieval(db, userId, query, categoryFilter);
-            }
-
+            // Generate embedding before opening a DB transaction — the AI Core call
+            // can take seconds and we don't want to hold a connection open during it.
             const embedding = await this.embedText(query);
             if (!embedding) {
                 console.error('Failed to generate embedding for query');
-                return [];
+                return this._keywordFallbackRetrieval(db, userId, query, categoryFilter);
             }
 
             const embeddingStr = `[${embedding.join(',')}]`;
 
             // Combined score: (similarity + frequency boost) × recency decay × confidence
             // personal_fact is exempt from decay (stable identity facts should always surface)
-            const scoreExpr = `(COSINE_SIMILARITY("EMBEDDING", TO_REAL_VECTOR(?)) + COALESCE("ACCESSCOUNT", 0) * 0.01) *
+            // NOTE: embedding literal is inlined (not bound as ?) because HANA's TO_REAL_VECTOR
+            // does not work reliably with large string parameters bound via prepared statements.
+            const scoreExpr = `(COSINE_SIMILARITY("EMBEDDING", TO_REAL_VECTOR('${embeddingStr}')) + COALESCE("ACCESSCOUNT", 0) * 0.01) *
                 CASE WHEN "CATEGORY" = 'personal_fact'
                      THEN 1.0
                      ELSE EXP(-0.005 * DAYS_BETWEEN("CREATEDAT", CURRENT_TIMESTAMP))
@@ -507,32 +461,53 @@ Respond with JSON only: {"action": "duplicate"|"update"|"new", "updatedContent":
                 COALESCE("CONFIDENCE", 1.0)`;
 
             const whereParts = ['"USERID" = ?'];
-            const params = [embeddingStr, userId];
+            const params = [userId];
             if (categoryFilter) {
                 whereParts.push('"CATEGORY" = ?');
                 params.push(categoryFilter);
             }
 
-            const result = await new Promise((resolve, reject) => {
-                hana.exec(
-                    `SELECT TOP ${this.maxRetrievedMemories} "ID", "CONTENT",
+            // db.run() with a raw SQL string goes through the CDS service layer, which
+            // handles connection pooling correctly even outside a CDS request context.
+            // This avoids the db.dbc / tx.dbc issues that arise because db.tx() requires
+            // cds.context to be set (only true inside CDS-managed OData handlers, not in
+            // our custom Express/WebSocket handlers).
+            let rows;
+            try {
+                rows = await db.run(
+                    `SELECT TOP ${this.maxRetrievedMemories} "ID", "CONTENT", "ACCESSCOUNT",
                             ${scoreExpr} AS score
                      FROM "AI_CHAT_USERMEMORIES"
                      WHERE ${whereParts.join(' AND ')}
                      ORDER BY score DESC`,
-                    params,
-                    (err, rows) => { if (err) reject(err); else resolve(rows); }
+                    params
                 );
-            });
-
-            const filtered = (result || []).filter(r => r.SCORE >= this.minRetrievalScore);
-
-            if (filtered.length > 0) {
-                this._updateAccessCounts(hana, filtered.map(r => r.ID));
+            } catch (queryErr) {
+                console.error('HANA vector search error, falling back to keyword search:', queryErr.message);
+                return this._keywordFallbackRetrieval(db, userId, query, categoryFilter);
             }
 
-            console.log(`Retrieved ${filtered.length} relevant memories for user ${userId}`);
-            return filtered.map(r => r.CONTENT);
+            const allRows = rows || [];
+            const filtered = allRows.filter(r => (r.SCORE ?? r.score) >= this.minRetrievalScore);
+            if (allRows.length > 0) {
+                const scores = allRows.map(r => { const s = r.SCORE ?? r.score; return s == null ? 'null' : (+s).toFixed(3); }).join(', ');
+                console.log(`Vector search: ${allRows.length} rows, scores: [${scores}], retrieved: ${filtered.length}`);
+            } else {
+                console.log(`Vector search: 0 rows for user ${userId}`);
+            }
+
+            if (filtered.length > 0) {
+                const items = filtered.map(r => ({
+                    id: r.ID ?? r.id,
+                    accessCount: Number(r.ACCESSCOUNT ?? r.accessCount ?? 0)
+                }));
+                this._updateAccessCountsCds(db, items);
+            }
+
+            return filtered.map(r => {
+                const c = r.CONTENT ?? r.content;
+                return typeof c === 'string' ? c : (c || '').toString();
+            });
 
         } catch (error) {
             console.error('Error retrieving memories:', error);
@@ -558,17 +533,46 @@ Respond with JSON only: {"action": "duplicate"|"update"|"new", "updatedContent":
         if (keywords.length > 0) {
             const scored = candidates
                 .map(m => ({
+                    id: m.ID,
                     content: m.content,
+                    accessCount: m.accessCount,
                     score: keywords.filter(kw => m.content.toLowerCase().includes(kw)).length
                 }))
                 .filter(m => m.score > 0)
                 .sort((a, b) => b.score - a.score)
                 .slice(0, this.maxRetrievedMemories);
 
-            if (scored.length > 0) return scored.map(m => m.content);
+            if (scored.length > 0) {
+                this._updateAccessCountsCds(db, scored);
+                return scored.map(m => m.content);
+            }
         }
 
-        return candidates.slice(0, this.maxRetrievedMemories).map(m => m.content);
+        const selected = candidates.slice(0, this.maxRetrievedMemories);
+        this._updateAccessCountsCds(db, selected.map(m => ({ id: m.ID, accessCount: m.accessCount })));
+        return selected.map(m => m.content);
+    }
+
+    /**
+     * Increment accessCount and update lastAccessedAt using CDS (fallback when native HANA is unavailable).
+     * Fire-and-forget — errors are logged but not propagated.
+     */
+    _updateAccessCountsCds(db, items) {
+        if (items.length === 0) return;
+        const now = new Date().toISOString();
+        Promise.all(
+            items.map(({ id, accessCount }) =>
+                db.run(
+                    UPDATE('ai.chat.UserMemories')
+                        .set({ accessCount: (accessCount || 0) + 1, lastAccessedAt: now })
+                        .where({ ID: id })
+                )
+            )
+        ).then(() => {
+            console.log(`Updated access counts for ${items.length} memories (fallback)`);
+        }).catch(err => {
+            console.error('Failed to update access counts (fallback):', err);
+        });
     }
 
     // ─── Prompt formatting ────────────────────────────────────────────────────

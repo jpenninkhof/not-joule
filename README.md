@@ -62,8 +62,7 @@ ai-chat-app/
 │   │   └── xs-app.json          # Route configuration (incl. WebSocket)
 │   └── xs-app.json          # App router configuration (CDS build source)
 ├── db/
-│   ├── schema.cds           # Database schema
-│   └── undeploy.json        # HDI undeploy allowlist
+│   └── schema.cds           # Database schema
 ├── srv/
 │   ├── chat-service.cds     # OData service definition
 │   ├── chat-service.js      # OData service implementation
@@ -175,6 +174,7 @@ Set these environment variables (or configure them in `mta.yaml`):
 | `AICORE_PERPLEXITY_DEPLOYMENT_ID` | Deployment ID for Perplexity Sonar (web search). Omit to disable web search. |
 | `AICORE_RESOURCE_GROUP` | AI Core resource group (default: `default`) |
 | `AICORE_MODEL_NAME` | Display name for the model (shown in UI) |
+| `AICORE_EMBEDDING_MODEL_TYPE` | Set to `openai` when using an OpenAI-compatible embedding model (e.g. text-embedding-3-small). Omit for Amazon Titan (default). |
 
 ### Security & Limits
 
@@ -270,7 +270,7 @@ score = (cosine_similarity + accessCount × 0.01) × recency_decay × confidence
 - **Recency decay**: `EXP(-0.005 × days_since_created)` — ~14% drop at 30 days, ~59% at 180 days
 - `personal_fact` category is **exempt from decay** (name, employer, location always surface)
 - **Access tracking**: `accessCount` and `lastAccessedAt` are updated on every retrieval hit
-- Memories scoring below 0.4 are filtered out
+- Memories scoring below the retrieval threshold are filtered out (threshold is 0.0 for Amazon Titan, 0.3+ for OpenAI-compatible models)
 
 ### Database Schema (key tables)
 

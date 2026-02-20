@@ -40,6 +40,7 @@ modules:
       AICORE_DEPLOYMENT_ID: d76331514e34ae4c
       AICORE_PERPLEXITY_DEPLOYMENT_ID: d75d4b70303ee848
       AICORE_EMBEDDING_DEPLOYMENT_ID: d4f53992eba833fe
+      # AICORE_EMBEDDING_MODEL_TYPE: openai  # uncomment when azure-openai foundation model is fixed
       CORS_ALLOWED_ORIGINS: https://btp-ca-nl-dev-ai-chat-app-router.cfapps.eu10-004.hana.ondemand.com,https://notjoule.cfapps.eu10-004.hana.ondemand.com
     provides:
       - name: srv-api
