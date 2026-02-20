@@ -44,4 +44,8 @@ entity UserMemories : cuid, managed {
     content               : LargeString not null;  // The raw memory text
     embedding             : Vector(1024);          // Vector embedding (1024 dimensions for Amazon Titan)
     sourceConversationId  : String(36);            // UUID of the conversation this memory came from
+    category              : String(50);            // 'personal_fact' | 'preference' | 'goal' | 'project' | 'episodic'
+    confidence            : Double default 1.0;    // Extraction confidence: 1.0=explicit, 0.7=implied, 0.4=uncertain
+    accessCount           : Integer default 0;     // Number of times retrieved (frequency boost)
+    lastAccessedAt        : Timestamp;             // Last retrieval timestamp (recency tracking)
 }

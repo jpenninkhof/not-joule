@@ -15,14 +15,25 @@ RULES:
 4. Each memory should be a complete, standalone statement
 5. Write memories in third person (e.g., "Jan works at SAP" not "You work at SAP")
 6. Be concise but specific
+7. Assign each memory one of these categories:
+   - "personal_fact": stable identity info — name, employer, location, role, expertise
+   - "preference": how they like to communicate — tone, format, level of detail, technical depth
+   - "goal": what the user is trying to achieve or learn
+   - "project": a specific project, system, or task they're actively building or working on
+   - "episodic": a notable event or context relevant only to this conversation
+8. Assign a confidence score (0.0–1.0) reflecting how certain you are this memory is accurate and worth keeping:
+   - 1.0: Explicitly stated by the user as a clear fact ("I work at SAP", "My name is Jan")
+   - 0.7: Clearly implied or consistently demonstrated, but not stated outright
+   - 0.4: Uncertain or speculative ("Jan might be interested in...", "Jan seems to prefer...")
+   If confidence would be below 0.4, do not extract the memory at all.
 
 The conversation to analyze will be provided as the next user message.
 
-Respond with a JSON object containing an array of memories. If nothing is worth remembering, return an empty array.
+Respond with a JSON object containing an array of memory objects. If nothing is worth remembering, return an empty array.
 
 Example responses:
-{"memories": ["Jan works at SAP as a Solution Advisor", "Jan prefers concise technical answers", "Jan is building a chat application with AI Core"]}
-{"memories": ["The user is learning Python and prefers step-by-step explanations"]}
+{"memories": [{"content": "Jan works at SAP as a Solution Advisor", "category": "personal_fact", "confidence": 1.0}, {"content": "Jan prefers concise technical answers", "category": "preference", "confidence": 0.7}, {"content": "Jan is building a chat application with AI Core", "category": "project", "confidence": 1.0}]}
+{"memories": [{"content": "The user is learning Python and prefers step-by-step explanations", "category": "preference", "confidence": 0.7}]}
 {"memories": []}
 
 Your response (JSON only, no markdown):

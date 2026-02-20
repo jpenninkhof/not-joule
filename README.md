@@ -234,15 +234,49 @@ If WebSocket is unavailable, the frontend automatically falls back to SSE via `P
 
 ## Persistent Memory System
 
-After each conversation turn, the system extracts 0–3 memory-worthy facts (personal attributes, preferences, goals) using the AI model, generates vector embeddings, and stores them in HANA with deduplication (cosine similarity > 0.92 = duplicate).
+After each conversation turn, the system asynchronously extracts 0–3 memory-worthy facts using the AI model, generates vector embeddings via Amazon Titan or OpenAI-compatible models, and stores them in HANA.
 
-At the start of each conversation, the user's message is embedded and the top 5 most semantically relevant memories are retrieved and injected into the system prompt.
+At the start of each conversation, the user's message is embedded and the top 5 most relevant memories are retrieved and injected into the system prompt.
+
+### Extraction
+
+Each extracted memory carries three fields:
+
+| Field | Description |
+|---|---|
+| `content` | Standalone fact written in third person |
+| `category` | `personal_fact` · `preference` · `goal` · `project` · `episodic` |
+| `confidence` | `1.0` = explicitly stated · `0.7` = clearly implied · `0.4` = uncertain |
+
+Facts with confidence below 0.4 are not extracted at all.
+
+### Storage & Deduplication
+
+| Cosine similarity to existing memory | Action |
+|---|---|
+| ≥ 0.85 | Duplicate — skip |
+| 0.55 – 0.84 | LLM classifies as **duplicate** / **update** (overwrites) / **new** |
+| < 0.55 | New — insert |
+
+### Retrieval Scoring
+
+Memories are ranked by a combined score computed in HANA:
+
+```
+score = (cosine_similarity + accessCount × 0.01) × recency_decay × confidence
+```
+
+- **Recency decay**: `EXP(-0.005 × days_since_created)` — ~14% drop at 30 days, ~59% at 180 days
+- `personal_fact` category is **exempt from decay** (name, employer, location always surface)
+- **Access tracking**: `accessCount` and `lastAccessedAt` are updated on every retrieval hit
+- Memories scoring below 0.4 are filtered out
 
 ### Database Schema (key tables)
 
 ```
 UserMemories: ID, userId, content, embedding REAL_VECTOR(1024),
-              sourceConversationId, createdAt, modifiedAt
+              sourceConversationId, category, confidence,
+              accessCount, lastAccessedAt, createdAt, modifiedAt
 Conversations: ID, title, userId, createdAt, modifiedAt
 Messages:      ID, conversation_ID, role, content, createdAt, modifiedAt
 MessageAttachments: ID, message_ID, filename, mimeType, content, status
