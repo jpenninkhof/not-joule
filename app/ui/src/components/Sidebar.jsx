@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 /**
  * Sidebar component for conversation list
@@ -17,7 +17,22 @@ export function Sidebar({
   ChatbotLogo,
 }) {
   const [showAICorePopup, setShowAICorePopup] = useState(false);
-  
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef(null);
+
+  // Close user menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
+        setShowUserMenu(false);
+      }
+    }
+    if (showUserMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showUserMenu]);
+
   // Get user initials
   const getUserInitials = () => {
     if (!user || !user.name) return 'U';
@@ -123,26 +138,43 @@ export function Sidebar({
 
         {/* Footer with User and Powered By */}
         <div className="p-4">
-          {/* User info */}
-          <div className="flex items-center gap-3 text-dark-400 text-sm mb-3">
-            <div className="w-8 h-8 rounded-full bg-accent-primary flex items-center justify-center text-white text-xs font-medium">
-              {getUserInitials()}
-            </div>
-            <span className="truncate">{user?.name || 'User'}</span>
-          </div>
+          {/* User info - click to open menu */}
+          <div className="relative mb-3" ref={userMenuRef}>
+            <button
+              onClick={() => setShowUserMenu(v => !v)}
+              className="w-full flex items-center gap-3 px-2 py-2 rounded-lg
+                         text-dark-400 hover:text-dark-100 hover:bg-dark-800
+                         transition-colors duration-150 text-sm group"
+            >
+              <div className="w-8 h-8 rounded-full bg-accent-primary flex items-center justify-center text-white text-xs font-medium flex-shrink-0">
+                {getUserInitials()}
+              </div>
+              <span className="truncate flex-1 text-left">{user?.name || 'User'}</span>
+              <svg
+                className={`w-4 h-4 flex-shrink-0 transition-transform duration-150 ${showUserMenu ? 'rotate-180' : ''}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+              </svg>
+            </button>
 
-          {/* Memories button */}
-          <button
-            onClick={onOpenMemories}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg mb-3
-                       text-dark-400 hover:text-dark-100 hover:bg-dark-800
-                       transition-colors duration-150 text-sm"
-          >
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-            <span>Memories</span>
-          </button>
+            {/* User popup menu */}
+            {showUserMenu && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-dark-800 border border-dark-700 rounded-lg shadow-lg overflow-hidden">
+                <button
+                  onClick={() => { onOpenMemories(); setShowUserMenu(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5
+                             text-dark-300 hover:text-dark-100 hover:bg-dark-700
+                             transition-colors duration-150 text-sm"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                  <span>Memories</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Divider line */}
           <div className="border-t border-dark-700 mb-3"></div>
