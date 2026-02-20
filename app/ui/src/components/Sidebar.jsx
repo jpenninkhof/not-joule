@@ -10,6 +10,7 @@ export function Sidebar({
   onNewConversation,
   onDeleteConversation,
   onNavigateHome,
+  onOpenMemories,
   isOpen,
   onClose,
   user,
@@ -129,7 +130,20 @@ export function Sidebar({
             </div>
             <span className="truncate">{user?.name || 'User'}</span>
           </div>
-          
+
+          {/* Memories button */}
+          <button
+            onClick={onOpenMemories}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg mb-3
+                       text-dark-400 hover:text-dark-100 hover:bg-dark-800
+                       transition-colors duration-150 text-sm"
+          >
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+            <span>Memories</span>
+          </button>
+
           {/* Divider line */}
           <div className="border-t border-dark-700 mb-3"></div>
           

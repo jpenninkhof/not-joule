@@ -216,3 +216,25 @@ export async function getAttachment(attachmentId) {
   const data = await fetchAPI(`${API_BASE}/attachment/${attachmentId}`);
   return data;
 }
+
+/**
+ * Get all memories for the current user
+ */
+export async function getMemories() {
+  const data = await fetchAPI(`${API_BASE}/memories`);
+  return data.memories || [];
+}
+
+/**
+ * Delete a specific memory by ID
+ */
+export async function deleteMemory(id) {
+  await fetchAPI(`${API_BASE}/memories/${id}`, { method: 'DELETE' });
+}
+
+/**
+ * Clear all memories for the current user
+ */
+export async function clearMemories() {
+  await fetchAPI(`${API_BASE}/memories`, { method: 'DELETE' });
+}

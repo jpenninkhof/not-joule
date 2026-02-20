@@ -3,6 +3,7 @@ import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './components/ChatMessage';
 import { ChatInput } from './components/ChatInput';
 import { ChatbotLogo } from './components/ChatbotLogo';
+import { MemoryPanel } from './components/MemoryPanel';
 import { useChat } from './hooks/useChat';
 import { getConversations, deleteConversation, createConversation } from './services/api';
 
@@ -12,6 +13,7 @@ import { getConversations, deleteConversation, createConversation } from './serv
 function App() {
   const [conversations, setConversations] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showMemories, setShowMemories] = useState(false);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [user, setUser] = useState(null);
   const [modelName, setModelName] = useState('Unknown model');
@@ -137,6 +139,11 @@ function App() {
     setSidebarOpen(false);
   };
 
+  const handleOpenMemories = () => {
+    setShowMemories(true);
+    setSidebarOpen(false);
+  };
+
   const handleExampleClick = async (text) => {
     // Create a new conversation and send the example message
     try {
@@ -184,11 +191,15 @@ function App() {
         onNewConversation={handleNewConversation}
         onDeleteConversation={handleDeleteConversation}
         onNavigateHome={handleNavigateHome}
+        onOpenMemories={handleOpenMemories}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         user={user}
         ChatbotLogo={ChatbotLogo}
       />
+
+      {/* Memory panel */}
+      {showMemories && <MemoryPanel onClose={() => setShowMemories(false)} />}
 
       {/* Main content */}
       <main className="flex-1 flex flex-col min-w-0">
