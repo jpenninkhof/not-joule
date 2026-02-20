@@ -11,6 +11,7 @@ A modern AI chat interface built with SAP CAP (Cloud Application Programming Mod
 - **Secure Authentication** - XSUAA-based user authentication via SAP App Router
 - **Persistent Storage** - Chat history stored in SAP HANA database
 - **Persistent Memory** - AI remembers user preferences and context across conversations using HANA vector engine
+- **Memory Management UI** - View, delete, and clear memories from the in-app panel (click your name in the sidebar)
 - **Rate Limiting** - Per-user request rate limiting to prevent abuse
 - **Cloud-Ready** - Deployable to SAP BTP Cloud Foundry
 
@@ -255,8 +256,8 @@ Facts with confidence below 0.4 are not extracted at all.
 | Cosine similarity to existing memory | Action |
 |---|---|
 | ≥ 0.85 | Duplicate — skip |
-| 0.55 – 0.84 | LLM classifies as **duplicate** / **update** (overwrites) / **new** |
-| < 0.55 | New — insert |
+| 0.35 – 0.84 | LLM classifies as **duplicate** / **update** (overwrites) / **new** |
+| < 0.35 | New — insert |
 
 ### Retrieval Scoring
 
@@ -283,6 +284,10 @@ MessageAttachments: ID, message_ID, filename, mimeType, content, status
 ```
 
 ### Memory Management
+
+Memories can be managed directly in the UI: click your name in the sidebar to open the Memories panel. From there you can inspect each memory (category, confidence, access count), delete individual entries, or clear all memories with a two-step confirmation.
+
+The same operations are available via the REST API:
 
 ```bash
 # Get all memories
