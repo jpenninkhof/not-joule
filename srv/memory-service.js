@@ -477,6 +477,12 @@ Respond with JSON only: {"action": "duplicate"|"update"|"new", "updatedContent":
     async retrieveRelevantMemories(userId, query, categoryFilter = null) {
         try {
             const db = await cds.connect.to('db');
+
+            // Run a CDS query first to ensure the native HANA connection (db.dbc) is initialised.
+            // Without this, db.dbc is null at request time even though it becomes available after
+            // the first query executes through the CDS adapter.
+            await db.run(SELECT.from('ai.chat.UserMemories').where({ userId }).columns('ID').limit(1));
+
             const hana = db.dbc;
 
             if (!hana || !hana.exec) {
