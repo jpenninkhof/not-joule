@@ -38,9 +38,7 @@ class MemoryService {
                 this.extractionPrompt = fs.readFileSync(promptPath, 'utf8');
             } catch (error) {
                 console.error('Failed to load extraction prompt:', error);
-                this.extractionPrompt = `Extract 0-3 important personal facts from the conversation I provide. Return JSON: {"memories": [{"content": "fact", "category": "personal_fact"}]}
-
-Your response (JSON only):`;
+                this.extractionPrompt = `Extract 0-3 important personal facts from the conversation. Return JSON: {"memories": [{"content": "fact", "category": "personal_fact", "confidence": 1.0}]}\n\nYour response (JSON only):`;
             }
         }
         return this.extractionPrompt;
@@ -53,7 +51,7 @@ Your response (JSON only):`;
      * @param {Array} messages - Array of {role, content} message objects
      * @param {string} userId
      * @param {string} conversationId
-     * @returns {Promise<Array<{content: string, category: string|null}>>}
+     * @returns {Promise<Array<{content: string, category: string|null, confidence: number}>>}
      */
     async extractMemories(messages, userId, conversationId) {
         try {
@@ -75,10 +73,6 @@ Your response (JSON only):`;
                     if (Array.isArray(parsed.memories)) {
                         memories = parsed.memories
                             .map(m => {
-                                // Support both old format (plain string) and new format ({content, category, confidence})
-                                if (typeof m === 'string' && m.trim().length > 0) {
-                                    return { content: m.trim(), category: null, confidence: 1.0 };
-                                }
                                 if (typeof m === 'object' && m && typeof m.content === 'string' && m.content.trim().length > 0) {
                                     const confidence = typeof m.confidence === 'number'
                                         ? Math.min(1.0, Math.max(0.0, m.confidence))
@@ -436,7 +430,13 @@ Respond with JSON only: {"action": "duplicate"|"update"|"new", "updatedContent":
              SET "ACCESSCOUNT" = COALESCE("ACCESSCOUNT", 0) + 1, "LASTACCESSEDAT" = ?
              WHERE "ID" IN (${placeholders})`,
             [now, ...ids],
-            (err) => { if (err) console.error('Failed to update access counts:', err); }
+            (err, rowsAffected) => {
+                if (err) {
+                    console.error('Failed to update access counts:', err, '| IDs:', ids);
+                } else {
+                    console.log(`Updated access counts for ${rowsAffected} memories`);
+                }
+            }
         );
     }
 
