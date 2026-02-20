@@ -13,7 +13,7 @@ RULES:
    - Temporary states or moods
    - Information already commonly known
 4. Each memory should be a complete, standalone statement
-5. Write memories in third person (e.g., "Jan works at SAP" not "You work at SAP")
+5. Write memories in third person using the user's actual name if it is known from the conversation (e.g., "Jan works at SAP"). If the name is not known, use "The user" — but never mix both styles: once a name is used, always use it.
 6. Be concise but specific
 7. Assign each memory one of these categories:
    - "personal_fact": stable identity info — name, employer, location, role, expertise
@@ -33,7 +33,7 @@ Respond with a JSON object containing an array of memory objects. If nothing is 
 
 Example responses:
 {"memories": [{"content": "Jan works at SAP as a Solution Advisor", "category": "personal_fact", "confidence": 1.0}, {"content": "Jan prefers concise technical answers", "category": "preference", "confidence": 0.7}, {"content": "Jan is building a chat application with AI Core", "category": "project", "confidence": 1.0}]}
-{"memories": [{"content": "The user is learning Python and prefers step-by-step explanations", "category": "preference", "confidence": 0.7}]}
+{"memories": [{"content": "Alex is learning Python and prefers step-by-step explanations", "category": "preference", "confidence": 0.7}]}
 {"memories": []}
 
 Your response (JSON only, no markdown):

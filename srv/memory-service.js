@@ -19,7 +19,7 @@ class MemoryService {
         this.extractionPrompt = null;
         this.embeddingDeploymentId = process.env.AICORE_EMBEDDING_DEPLOYMENT_ID || null;
         this.similarityThreshold = 0.85;     // Cosine similarity >= this → duplicate, skip
-        this.contradictionThreshold = 0.55;  // Cosine similarity in [this, 0.85) → LLM check
+        this.contradictionThreshold = 0.35;  // Cosine similarity in [this, 0.85) → LLM check
         this.maxMemoriesPerExtraction = 3;
         this.maxRetrievedMemories = 5;
         this.minRetrievalScore = 0.4;        // Combined retrieval score minimum
