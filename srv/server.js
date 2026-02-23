@@ -757,6 +757,37 @@ cds.on('served', async () => {
         }
     });
 
+    // --- Rename conversation ---
+    app.patch('/api/conversation/:id', authMiddleware, async (req, res) => {
+        try {
+            const conversationId = req.params.id;
+            if (!isValidUUID(conversationId)) {
+                return res.status(400).json({ error: 'Invalid conversation ID format' });
+            }
+            const { title } = req.body;
+            if (!title || typeof title !== 'string' || title.trim().length === 0) {
+                return res.status(400).json({ error: 'Title is required' });
+            }
+            const db = await cds.connect.to('db');
+
+            const conversation = await db.run(
+                SELECT.one.from('ai.chat.Conversations').where({ ID: conversationId, userId: req.user.id })
+            );
+            if (!conversation) {
+                return res.status(404).json({ error: 'Conversation not found or access denied' });
+            }
+
+            await db.run(
+                UPDATE('ai.chat.Conversations').set({ title: title.trim().substring(0, 255) }).where({ ID: conversationId })
+            );
+
+            res.json({ success: true });
+        } catch (error) {
+            console.error('Error renaming conversation:', error);
+            res.status(500).json({ error: 'Failed to rename conversation' });
+        }
+    });
+
     // --- User info ---
     app.get('/api/userinfo', authMiddleware, (req, res) => {
         const user = req.user;

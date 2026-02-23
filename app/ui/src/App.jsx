@@ -5,7 +5,7 @@ import { ChatInput } from './components/ChatInput';
 import { ChatbotLogo } from './components/ChatbotLogo';
 import { MemoryPanel } from './components/MemoryPanel';
 import { useChat } from './hooks/useChat';
-import { getConversations, deleteConversation, createConversation } from './services/api';
+import { getConversations, deleteConversation, createConversation, renameConversation } from './services/api';
 
 /**
  * Main App Component
@@ -134,6 +134,19 @@ function App() {
     }
   };
 
+  const handleRenameConversation = async (id, newTitle) => {
+    // Optimistic update
+    setConversations((prev) =>
+      prev.map((c) => (c.ID === id ? { ...c, title: newTitle } : c))
+    );
+    try {
+      await renameConversation(id, newTitle);
+    } catch (err) {
+      console.error('Failed to rename conversation:', err);
+      await loadConversationsList();
+    }
+  };
+
   const handleNavigateHome = () => {
     clearConversation();
     setSidebarOpen(false);
@@ -190,6 +203,7 @@ function App() {
         onSelectConversation={handleSelectConversation}
         onNewConversation={handleNewConversation}
         onDeleteConversation={handleDeleteConversation}
+        onRenameConversation={handleRenameConversation}
         onNavigateHome={handleNavigateHome}
         onOpenMemories={handleOpenMemories}
         isOpen={sidebarOpen}

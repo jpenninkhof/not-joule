@@ -9,6 +9,7 @@ export function Sidebar({
   onSelectConversation,
   onNewConversation,
   onDeleteConversation,
+  onRenameConversation,
   onNavigateHome,
   onOpenMemories,
   isOpen,
@@ -130,6 +131,7 @@ export function Sidebar({
                   isActive={conv.ID === currentConversationId}
                   onSelect={() => onSelectConversation(conv.ID)}
                   onDelete={() => onDeleteConversation(conv.ID)}
+                  onRename={(newTitle) => onRenameConversation(conv.ID, newTitle)}
                 />
               ))}
             </div>
@@ -237,19 +239,47 @@ export function Sidebar({
 /**
  * Individual conversation item
  */
-function ConversationItem({ conversation, isActive, onSelect, onDelete }) {
-  const [showDelete, setShowDelete] = React.useState(false);
+function ConversationItem({ conversation, isActive, onSelect, onDelete, onRename }) {
+  const [showActions, setShowActions] = React.useState(false);
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [editValue, setEditValue] = React.useState('');
+  const inputRef = React.useRef(null);
+
+  const startEditing = (e) => {
+    e.stopPropagation();
+    setEditValue(conversation.title || 'New Chat');
+    setIsEditing(true);
+  };
+
+  const commitEdit = () => {
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== (conversation.title || 'New Chat')) {
+      onRename(trimmed);
+    }
+    setIsEditing(false);
+  };
+
+  const cancelEdit = () => {
+    setIsEditing(false);
+  };
+
+  React.useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
 
   return (
     <div
       className={`
-        group relative flex items-center gap-3 px-3 py-3 rounded-lg cursor-pointer
+        group relative flex items-center gap-3 px-3 py-3 rounded-lg
         transition-colors duration-150
-        ${isActive ? 'bg-dark-800' : 'hover:bg-dark-800/50'}
+        ${isEditing ? 'bg-dark-800' : isActive ? 'bg-dark-800 cursor-pointer' : 'hover:bg-dark-800/50 cursor-pointer'}
       `}
-      onClick={onSelect}
-      onMouseEnter={() => setShowDelete(true)}
-      onMouseLeave={() => setShowDelete(false)}
+      onClick={isEditing ? undefined : onSelect}
+      onMouseEnter={() => setShowActions(true)}
+      onMouseLeave={() => setShowActions(false)}
     >
       <svg
         className="w-5 h-5 text-dark-500 flex-shrink-0"
@@ -264,35 +294,75 @@ function ConversationItem({ conversation, isActive, onSelect, onDelete }) {
           d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
         />
       </svg>
-      <span className="flex-1 truncate text-sm text-dark-200">
-        {conversation.title || 'New Chat'}
-      </span>
-      
-      {/* Delete button */}
-      {showDelete && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          className="p-1 rounded hover:bg-dark-700 text-dark-500 hover:text-red-400
-                     transition-colors duration-150"
-          title="Delete conversation"
-        >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+
+      {isEditing ? (
+        <>
+          <input
+            ref={inputRef}
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitEdit();
+              else if (e.key === 'Escape') cancelEdit();
+            }}
+            onBlur={commitEdit}
+            className="flex-1 bg-dark-700 text-sm text-dark-100 rounded px-2 py-0.5
+                       border border-accent-primary/50 outline-none min-w-0"
+            maxLength={255}
+          />
+          <button
+            onMouseDown={(e) => { e.preventDefault(); commitEdit(); }}
+            className="p-1 rounded hover:bg-dark-700 text-green-400 transition-colors duration-150 flex-shrink-0"
+            title="Save"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-            />
-          </svg>
-        </button>
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            </svg>
+          </button>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); cancelEdit(); }}
+            className="p-1 rounded hover:bg-dark-700 text-dark-500 hover:text-dark-200 transition-colors duration-150 flex-shrink-0"
+            title="Cancel"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="flex-1 truncate text-sm text-dark-200">
+            {conversation.title || 'New Chat'}
+          </span>
+
+          {showActions && (
+            <>
+              <button
+                onClick={startEditing}
+                className="p-1 rounded hover:bg-dark-700 text-dark-500 hover:text-dark-200
+                           transition-colors duration-150 flex-shrink-0"
+                title="Rename conversation"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                className="p-1 rounded hover:bg-dark-700 text-dark-500 hover:text-red-400
+                           transition-colors duration-150 flex-shrink-0"
+                title="Delete conversation"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </>
+          )}
+        </>
       )}
     </div>
   );

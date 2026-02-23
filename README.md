@@ -5,6 +5,7 @@ A modern AI chat interface built with SAP CAP (Cloud Application Programming Mod
 ## Features
 
 - **Modern Dark UI** - Clean, responsive interface with conversation sidebar
+- **Conversation Renaming** - Inline rename conversations directly in the sidebar (hover to reveal the pencil icon)
 - **Real-time Streaming** - WebSocket primary transport with SSE fallback for progressive responses
 - **Web Search** - Live web search via Perplexity Sonar with a "Searching the web…" indicator in the UI
 - **File Attachments** - Upload and send files (images, documents) alongside messages
@@ -200,6 +201,7 @@ Set these environment variables (or configure them in `mta.yaml`):
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/conversation` | Create a new conversation |
+| `PATCH` | `/api/conversation/:id` | Rename a conversation |
 | `DELETE` | `/api/conversation/:id` | Delete a conversation |
 | `POST` | `/api/chat/stream` | Send message, stream response via SSE |
 | `GET` | `/api/userinfo` | Get current user info |

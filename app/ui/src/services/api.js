@@ -107,6 +107,16 @@ export async function deleteConversation(id) {
 }
 
 /**
+ * Rename a conversation
+ */
+export async function renameConversation(id, title) {
+  await fetchAPI(`${API_BASE}/conversation/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  });
+}
+
+/**
  * Send a message (non-streaming)
  */
 export async function sendMessage(conversationId, content) {
