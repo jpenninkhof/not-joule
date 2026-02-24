@@ -121,6 +121,8 @@ class MemoryService {
                 return this.generateMockEmbedding(text);
             }
 
+            // Default to 'titan' for Amazon Titan embedding models
+            // Set AICORE_EMBEDDING_MODEL_TYPE=openai for OpenAI text-embedding models
             const embeddingModelType = process.env.AICORE_EMBEDDING_MODEL_TYPE || 'titan';
             let url, body;
 

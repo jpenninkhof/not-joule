@@ -175,7 +175,7 @@ Set these environment variables (or configure them in `mta.yaml`):
 | `AICORE_PERPLEXITY_DEPLOYMENT_ID` | Deployment ID for Perplexity Sonar (web search). Omit to disable web search. |
 | `AICORE_RESOURCE_GROUP` | AI Core resource group (default: `default`) |
 | `AICORE_MODEL_NAME` | Display name for the model (shown in UI) |
-| `AICORE_EMBEDDING_MODEL_TYPE` | Set to `openai` when using an OpenAI-compatible embedding model (e.g. text-embedding-3-small). Omit for Amazon Titan (default). |
+| `AICORE_EMBEDDING_MODEL_TYPE` | Set to `titan` for Amazon Titan embedding models (default), or `openai` for OpenAI-compatible models (e.g. text-embedding-3-small). |
 
 ### Security & Limits
 
@@ -316,6 +316,8 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" https://your-app/api/memories
 2. **Authentication errors**: Verify XSUAA configuration and role assignments in BTP Cockpit
 3. **AI Core errors**: Check deployment status in AI Launchpad; verify `AICORE_DEPLOYMENT_ID`
 4. **WebSocket not connecting**: Check that the App Router `xs-app.json` has `"websockets": { "enabled": true }` and a route for `/ws/(.*)`
+5. **"prompt is too long" error with PDF uploads**: Large PDFs are automatically truncated to fit within the model's context limit. If you still see this error, the PDF may contain binary data that expands significantly when JSON-escaped. The system uses conservative truncation (50K tokens max per file) to handle this.
+6. **Embedding API error "Subpath 'embeddings' is not allowed"**: This occurs when `AICORE_EMBEDDING_MODEL_TYPE` is set to `openai` but the deployment is an Amazon Titan model. Fix with: `cf set-env ai-chat-app-srv AICORE_EMBEDDING_MODEL_TYPE titan && cf restage ai-chat-app-srv`
 
 ## License
 

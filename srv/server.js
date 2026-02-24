@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const xsenv = require('@sap/xsenv');
 const xssec = require('@sap/xssec');
 const { memoryService } = require('./memory-service');
-const { getSharedAiCoreClient } = require('./ai-core-client');
+const { getSharedAiCoreClient, truncateMessageContent } = require('./ai-core-client');
 
 // Try to load WebSocket, but don't fail if not available
 let WebSocket;
@@ -294,6 +294,7 @@ async function saveAttachments(db, attachments, messageId) {
 
 /**
  * Build the AI messages array from conversation history and current attachments/memories.
+ * Truncates large messages to prevent token limit errors.
  */
 async function buildAiMessages(db, userId, conversationId, content, attachments) {
     const messages = await db.run(
@@ -303,9 +304,10 @@ async function buildAiMessages(db, userId, conversationId, content, attachments)
             .limit(20)
     );
 
+    // Truncate large messages in conversation history to prevent token overflow
     const aiMessages = messages.map(msg => ({
         role: msg.role,
-        content: msg.content
+        content: truncateMessageContent(msg.content, msg.role)
     }));
 
     // Attach current message's files to the last user message

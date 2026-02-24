@@ -1,5 +1,74 @@
 const https = require('https');
 
+// Token estimation: ~2.3 characters per token (very conservative for PDF content)
+// Actual Claude tokenization is much more aggressive than typical estimates
+// PDF content with special characters, formatting, and structured data tokenizes poorly
+const CHARS_PER_TOKEN = 2.3;
+// Maximum tokens for the model (Claude 3.5 Sonnet on Bedrock has 200K limit)
+const MAX_MODEL_TOKENS = 200000;
+// Reserve tokens for the response
+const RESPONSE_TOKEN_RESERVE = 8192;
+// Maximum input tokens we'll allow (with 25% safety margin to account for tokenization variance)
+const MAX_INPUT_TOKENS = Math.floor((MAX_MODEL_TOKENS - RESPONSE_TOKEN_RESERVE) * 0.75);
+// Maximum characters we'll allow in input
+const MAX_INPUT_CHARS = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
+
+/**
+ * Estimate token count from text (rough approximation)
+ * @param {string} text - The text to estimate
+ * @returns {number} Estimated token count
+ */
+function estimateTokens(text) {
+    if (!text) return 0;
+    return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+// Maximum characters per message in conversation history
+// Be very aggressive - allow only ~4K tokens per historical message
+const MAX_HISTORY_MESSAGE_CHARS = 4000 * CHARS_PER_TOKEN;
+
+/**
+ * Truncate message content from conversation history to prevent token overflow.
+ * This is applied when loading messages from the database.
+ * @param {string} content - The message content
+ * @param {string} role - The message role (user/assistant)
+ * @returns {string} Truncated content if necessary
+ */
+function truncateMessageContent(content, role = 'user') {
+    if (!content) return content;
+    
+    // Log message sizes for debugging
+    const contentLength = content.length;
+    const estimatedTokens = estimateTokens(content);
+    
+    if (contentLength > 10000) {
+        console.log(`Message (${role}): ${contentLength} chars, ~${estimatedTokens} tokens`);
+    }
+    
+    if (contentLength <= MAX_HISTORY_MESSAGE_CHARS) {
+        return content;
+    }
+
+    // Find a good break point
+    let truncateAt = MAX_HISTORY_MESSAGE_CHARS;
+    const lastParagraph = content.lastIndexOf('\n\n', MAX_HISTORY_MESSAGE_CHARS);
+    const lastSentence = content.lastIndexOf('. ', MAX_HISTORY_MESSAGE_CHARS);
+    
+    if (lastParagraph > MAX_HISTORY_MESSAGE_CHARS * 0.8) {
+        truncateAt = lastParagraph;
+    } else if (lastSentence > MAX_HISTORY_MESSAGE_CHARS * 0.8) {
+        truncateAt = lastSentence + 1;
+    }
+
+    const truncated = content.substring(0, truncateAt);
+    const originalTokens = estimateTokens(content);
+    const truncatedTokens = estimateTokens(truncated);
+    
+    console.warn(`Truncated ${role} message from ${originalTokens} to ${truncatedTokens} tokens in conversation history`);
+    
+    return truncated + `\n\n[... content truncated from ${originalTokens.toLocaleString()} to ${truncatedTokens.toLocaleString()} tokens ...]`;
+}
+
 /**
  * AI Core Client
  * Handles communication with SAP AI Core for chat completions
@@ -158,17 +227,58 @@ class AiCoreClient {
     }
 
     /**
+     * Truncate text to fit within token limit, adding a notice if truncated
+     * @param {string} text - The text to potentially truncate
+     * @param {number} maxChars - Maximum characters allowed
+     * @param {string} filename - Name of the file (for the truncation notice)
+     * @returns {object} { text: string, wasTruncated: boolean }
+     */
+    truncateText(text, maxChars, filename = 'document') {
+        if (!text || text.length <= maxChars) {
+            return { text, wasTruncated: false };
+        }
+
+        // Find a good break point (end of sentence or paragraph)
+        let truncateAt = maxChars;
+        const lastParagraph = text.lastIndexOf('\n\n', maxChars);
+        const lastSentence = text.lastIndexOf('. ', maxChars);
+        
+        if (lastParagraph > maxChars * 0.8) {
+            truncateAt = lastParagraph;
+        } else if (lastSentence > maxChars * 0.8) {
+            truncateAt = lastSentence + 1;
+        }
+
+        const truncatedText = text.substring(0, truncateAt);
+        const originalTokens = estimateTokens(text);
+        const truncatedTokens = estimateTokens(truncatedText);
+        
+        const notice = `\n\n[⚠️ DOCUMENT TRUNCATED: "${filename}" was ${originalTokens.toLocaleString()} tokens, truncated to ${truncatedTokens.toLocaleString()} tokens (${Math.round(truncatedTokens/originalTokens*100)}% of original) to fit model context limit. Consider summarizing in sections or using a smaller document.]`;
+        
+        return { 
+            text: truncatedText + notice, 
+            wasTruncated: true,
+            originalTokens,
+            truncatedTokens
+        };
+    }
+
+    /**
      * Convert OpenAI-style messages to Anthropic format
      * Supports file attachments (images) in the content
+     * Automatically truncates large documents to fit within token limits
      */
     convertToAnthropicFormat(messages) {
         // Extract system message if present
         let systemPrompt = '';
         const anthropicMessages = [];
+        let totalEstimatedTokens = 0;
+        const truncationWarnings = [];
 
         for (const msg of messages) {
             if (msg.role === 'system') {
                 systemPrompt = msg.content;
+                totalEstimatedTokens += estimateTokens(msg.content);
             } else {
                 // Check if message has attachments
                 if (msg.attachments && msg.attachments.length > 0) {
@@ -177,6 +287,7 @@ class AiCoreClient {
 
                     // Add attachments first
                     for (const attachment of msg.attachments) {
+                        console.log(`Processing attachment: ${attachment.name}, type: ${attachment.type}, data length: ${attachment.data?.length || 0}`);
                         if (attachment.type && attachment.type.startsWith('image/')) {
                             // Image attachment - use Anthropic's image format
                             // Extract base64 data from data URL if present
@@ -200,6 +311,8 @@ class AiCoreClient {
                                     data: base64Data
                                 }
                             });
+                            // Images are tokenized differently, rough estimate
+                            totalEstimatedTokens += 1000;
                         } else {
                             // Non-image file - include as text with file info
                             // Try to decode text files
@@ -219,10 +332,45 @@ class AiCoreClient {
                             } catch (e) {
                                 fileContent = '[Binary file content]';
                             }
+
+                            // Calculate remaining token budget for this file
+                            // Use a very conservative budget because:
+                            // 1. PDF binary decoded as UTF-8 contains many special characters
+                            // 2. JSON escaping can 2-6x the size of special characters
+                            // 3. We need to leave room for other messages and system prompt
+                            const remainingTokenBudget = Math.min(
+                                MAX_INPUT_TOKENS - totalEstimatedTokens - 1000,
+                                50000 // Hard cap at 50K tokens per file to be safe
+                            );
+                            // Use a much more conservative char budget (0.5 chars per token)
+                            // to account for JSON escaping of binary data interpreted as UTF-8
+                            const remainingCharBudget = remainingTokenBudget * 0.5;
+                            
+                            console.log(`File budget: ${remainingTokenBudget} tokens, ${remainingCharBudget} chars. File content: ${fileContent.length} chars`);
+
+                            // Truncate if necessary
+                            const { text: processedContent, wasTruncated, originalTokens, truncatedTokens } = 
+                                this.truncateText(fileContent, remainingCharBudget, attachment.name);
+
+                            if (wasTruncated) {
+                                console.warn(`Document "${attachment.name}" truncated from ${originalTokens} to ${truncatedTokens} tokens`);
+                                truncationWarnings.push({
+                                    filename: attachment.name,
+                                    originalTokens,
+                                    truncatedTokens
+                                });
+                            }
+
+                            const formattedContent = `[File: ${attachment.name}]\n\`\`\`\n${processedContent}\n\`\`\``;
                             contentParts.push({
                                 type: 'text',
-                                text: `[File: ${attachment.name}]\n\`\`\`\n${fileContent}\n\`\`\``
+                                text: formattedContent
                             });
+                            totalEstimatedTokens += estimateTokens(formattedContent);
+                            
+                            // IMPORTANT: Clear the original attachment data to prevent it from being
+                            // included in the JSON request (it was already decoded and processed above)
+                            attachment.data = null;
                         }
                     }
 
@@ -232,6 +380,7 @@ class AiCoreClient {
                             type: 'text',
                             text: msg.content
                         });
+                        totalEstimatedTokens += estimateTokens(msg.content);
                     }
 
                     anthropicMessages.push({
@@ -244,11 +393,15 @@ class AiCoreClient {
                         role: msg.role === 'assistant' ? 'assistant' : 'user',
                         content: msg.content
                     });
+                    totalEstimatedTokens += estimateTokens(msg.content);
                 }
             }
         }
 
-        return { systemPrompt, messages: anthropicMessages };
+        // Log token usage summary
+        console.log(`Total estimated input tokens: ${totalEstimatedTokens.toLocaleString()} / ${MAX_INPUT_TOKENS.toLocaleString()}`);
+
+        return { systemPrompt, messages: anthropicMessages, truncationWarnings };
     }
 
     /**
@@ -821,4 +974,4 @@ function getSharedAiCoreClient() {
     return _sharedClient;
 }
 
-module.exports = { AiCoreClient, getSharedAiCoreClient };
+module.exports = { AiCoreClient, getSharedAiCoreClient, truncateMessageContent };
